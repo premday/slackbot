@@ -1,0 +1,16 @@
+services:
+  premday-bot:
+    build: .
+    env_file: .env
+    environment:
+      PREMDAY_DB_PATH: /data/premday.sqlite3
+      RSVP_SMTP_PORT: 8025
+    ports:
+      - "127.0.0.1:${RSVP_SMTP_HOST_PORT:-2525}:8025"
+    volumes:
+      - premday_data:/data
+    restart: unless-stopped
+    init: true
+
+volumes:
+  premday_data:

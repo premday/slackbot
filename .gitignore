@@ -1,0 +1,12 @@
+.env
+.venv/
+.ruff_cache/
+.pytest_cache/
+.pyright/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+dist/
+build/
