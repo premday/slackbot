@@ -706,13 +706,16 @@ class PollService:
         if poll.status != COMPLETE:
             raise PollError("Only a complete poll can be validated.")
         valid = set(totals) == set(poll.metrics) and all(
-            isinstance(value, int)
-            and not isinstance(value, bool)
-            and 0 <= value < immap.MODULUS
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
             for value in totals.values()
         )
         if not valid:
             raise PollError("The totals do not match the poll's metrics.")
+        limit = len(poll.participants) * immap.MAX_VALUE
+        if any(value >= limit for value in totals.values()):
+            raise PollError(
+                "The totals are out of range: a submission was corrupted or tampered with."
+            )
         self._verify(poll, admin, ACTION_DONE, immap.totals_digest(totals), nonce, proof)
         return self._save(
             replace(

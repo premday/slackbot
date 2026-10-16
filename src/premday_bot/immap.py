@@ -298,7 +298,13 @@ def aggregate_sealed(poll: dict, lines: list[str], private_key: int, nonce: str)
     if set(rows) != expected:
         missing = sorted(expected - set(rows))
         raise ValueError(f"lines do not cover the participants (missing: {missing})")
+    limit = len(rows) * MAX_VALUE
     totals = aggregate(poll["metrics"], list(rows.values()))
+    bad = sorted(name for name, total in totals.items() if total >= limit)
+    if bad:
+        raise ValueError(
+            f"totals out of range for {bad}: a submission was corrupted or tampered with"
+        )
     proof = make_proof(private_key, poll, "done", totals_digest(totals), nonce)
     return {"totals": totals, "proof": proof}
 

@@ -1,4 +1,5 @@
 import ast
+import base64
 import json
 import random
 import re
@@ -350,3 +351,14 @@ def test_sealed_line_with_the_largest_template_and_five_admins_fits_a_modal_fiel
         "deadline": "2026-12-01",
     }
     assert len(immap.submit(poll, company, dict.fromkeys(metrics, 1))) < 3000
+
+
+def test_aggregate_refuses_totals_no_set_of_honest_values_could_make() -> None:
+    poll, company_keys, admin_keys, _ = make_poll(3)
+    lines = [immap.submit(poll, k, {n: 1 for n in TEMPLATE_METRICS}) for k in company_keys.values()]
+    garbage = immap.seal(b"\xff" * 8 * len(TEMPLATE_METRICS), poll["admins"])
+    first = next(iter(company_keys))
+    encoded = base64.urlsafe_b64encode(json.dumps(garbage, separators=(",", ":")).encode())
+    forged = f"immap2.{poll['poll_id']}.{first}.{encoded.decode().rstrip('=')}"
+    with pytest.raises(ValueError, match="out of range"):
+        immap.aggregate_sealed(poll, [forged, *lines[1:]], admin_keys[0], "n0nce")

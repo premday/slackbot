@@ -373,3 +373,23 @@ def test_a_proof_and_totals_pasted_with_code_fences_are_accepted(tmp_path) -> No
         proof=f"```{result['proof']}```",
     )
     assert done.status == DONE
+
+
+def test_totals_beyond_what_the_companies_could_have_submitted_are_refused(tmp_path) -> None:
+    world = make_world(tmp_path)
+    poll = world.complete_poll()
+    nonce = world.service.begin_admin_action(poll.id, email=ADMIN_EMAIL, action=ACTION_DONE)
+    result = world.admin_totals(poll, ADMIN_EMAIL, nonce)
+    absurd = {**result["totals"], "rack_count": len(COMPANIES) * immap.MAX_VALUE}
+    proof = immap.make_proof(
+        world.admin_keys[ADMIN_EMAIL],
+        poll_document(poll),
+        ACTION_DONE,
+        immap.totals_digest(absurd),
+        nonce,
+    )
+    with pytest.raises(PollError, match="out of range"):
+        world.service.mark_done(
+            poll.id, email=ADMIN_EMAIL, nonce=nonce, totals=absurd, proof=proof
+        )
+    assert world.service.get(poll.id).status == COMPLETE
