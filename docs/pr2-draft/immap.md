@@ -94,8 +94,9 @@ each metric is answered by the same set of companies, and it is also what makes 
 
 ## Participating Companies
 
-Each company holds a long-lived key pair (`immap.py keygen`) whose public half is registered with the
-organizer. It computes and submits **one** sealed line per poll.
+Each company is a named entry in a list kept by the admins. A Slack user enrolls with the public half of a
+long-lived key pair (`immap.py keygen`); an admin then **attributes** the company to that user. The user
+computes and submits **one** sealed line per poll for their company.
 
 ## Admins
 
@@ -103,7 +104,8 @@ A small group (a few people, any one suffices). Each admin holds a key pair too.
 
 - can open the sealed submissions and compute the totals offline;
 - validate the poll (**Mark done**), which is the only way totals become visible;
-- extend a deadline.
+- extend a deadline;
+- manage the list of companies and who answers for each.
 
 The two admin actions that change what the group sees need proof of possession of the admin private key
 on top of the Slack identity check.
@@ -141,8 +143,10 @@ no order and no relay.
 
 ## Step 1 — Setup (once)
 
-- Each company runs `python immap.py keygen` and registers its **public** key (`/immap register`).
-- Each admin does the same with `/immap admin-register`.
+- Each user runs `python immap.py keygen` and enrolls its **public** key (`/immap register <public_key>`).
+- Each admin does the same with `/immap admin-register`, and maintains the list of companies:
+  add or remove a company, then attribute it to an enrolled user. A company in a poll that is not finished
+  cannot change, because its key is part of the poll.
 
 Keys are reused across polls; masks differ per `poll_id`.
 
