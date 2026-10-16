@@ -72,10 +72,15 @@ so participants can compare them out of band.
 
 ```text
 created ──start──▶ collecting ──all submitted──▶ complete ──admin validates──▶ done
-   │                  │  ▲
-   │                  │  └───────── admin extends ─────────┐
-   │                  └─deadline passes, answers missing─▶ incomplete
-   └──────────────────────────── admin extends ───────────────┘ (back to its previous working state)
+                     │    ▲
+        deadline     │    │  admin extends deadline
+        passed,      ▼    │
+        answers   incomplete
+        missing
+
+created ──admin extends deadline──▶ created (same state, new deadline, badged "extended")
+collecting ──admin extends deadline──▶ collecting (same state, new deadline, badged "extended")
+incomplete ──admin extends deadline──▶ collecting
 ```
 
 | Status | Meaning | Submissions | Totals visible |
