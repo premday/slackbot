@@ -607,6 +607,54 @@ class PollService:
     def set_message_ts(self, poll_id: str, message_ts: str) -> Poll:
         return self._save(replace(self._get(poll_id), message_ts=message_ts))
 
+    def start(self, poll_id: str, *, user_id: str, email: str | None) -> Poll:
+        poll = self._get(poll_id)
+        if user_id != poll.creator_user_id and not self.is_admin(email):
+            raise PollError("Only the poll creator or an admin can start collecting.")
+        if poll.status != CREATED:
+            raise PollError(f"This poll is already {poll.status}.")
+        now = self._clock()
+        if poll.deadline <= now:
+            raise PollError("The deadline has passed. An admin must extend it first.")
+        return self._save(replace(poll, status=COLLECTING, started_at=now, last_reminded_at=None))
+
+    # -- collecting ---------------------------------------------------------------------------
+
+    def submit(self, poll_id: str, *, user_id: str, line: str) -> Poll:
+        poll = self._get(poll_id)
+        if poll.status != COLLECTING:
+            raise PollError(f"This poll is {poll.status}; it is not accepting submissions.")
+        if poll.deadline <= self._clock():
+            raise PollError("The deadline has passed.")
+        try:
+            line = unfence(line)
+            line_poll_id, company_id, envelope = immap.parse_line(line)
+            if line_poll_id != poll.id:
+                raise PollError("This line was made for a different poll.")
+            if company_id not in poll.participant_ids:
+                raise PollError(f"`{company_id}` is not part of this poll.")
+            immap.check_envelope(
+                envelope,
+                len(poll.metrics),
+                {immap.fingerprint(key) for _, key in poll.admins},
+            )
+        except ValueError as error:
+            raise PollError(str(error)) from error
+        company = self._store.get_company(company_id)
+        if company is None or user_id not in company.members:
+            raise PollError(f"You are not a member of `{company_id}`.")
+        self._store.put_submission(poll.id, company_id, line, self._clock())
+        if not self.missing(poll):
+            poll = self._save(replace(poll, status=COMPLETE))
+        return poll
+
+    def missing(self, poll: Poll) -> list[str]:
+        submitted = set(self._store.submission_lines(poll.id))
+        return [company_id for company_id in poll.participant_ids if company_id not in submitted]
+
+    def submitted(self, poll: Poll) -> list[str]:
+        return sorted(set(poll.participant_ids) - set(self.missing(poll)))
+
     # -- internals ------------------------------------------------------------------------------
 
     def _get(self, poll_id: str) -> Poll:
