@@ -18,7 +18,7 @@
 - **Never push to GitHub, open or comment on PRs, or write to any remote.** Commits stay local.
 - Every commit message ends with the line `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>` (the commands below pass it as a second `-m`).
 - Group: RFC 3526 group 14 (2048-bit MODP, `g = 2`); private exponents 256 random bits; masks and sums are mod `2^64`; values are integers `0 <= v < 2^48`.
-- Metrics (schema version 1): exactly the 12 from the PR, units unchanged, defined once in `immap.METRICS`.
+- Poll templates: a poll is created from a template, a fixed ordered list of metrics (`immap.POLL_TEMPLATES`, default `immap.DEFAULT_TEMPLATE`). The poll stores a snapshot of the template's metrics and version, so later template edits never change an existing poll. The first template, `infra-footprint` v1, has 23 metrics: the 12 of the PR (SSD split by technology instead of endurance class) plus what the reviewers of PR #2 asked for (GPU VRAM, racks and rack units, NICs, accelerators, PSU levels, optics, cabling, 21"/OCP servers).
 - Poll rules: at least 3 companies (the card warns below 10); mandatory future deadline = end of day in `PREMDAY_TIMEZONE`; at most 5 admin keys; titles at most 150 characters; nonces single-use, 15 minutes.
 - Statuses are exactly `created`, `collecting`, `complete`, `incomplete`, `done`.
 - Admin = Slack profile email in `IMMAP_ADMIN_EMAILS` (comma-separated, case-insensitive); any one admin suffices. Test fixtures: Aurélien Rougemont (Criteo) `a.rougemont@criteo.com`, a second admin, a non-admin.
@@ -29,9 +29,9 @@
 
 Inputs and conditions the spec implies but does not spell out. Each has a test in the task that owns the code.
 
-1. **Two companies registering the same public key** — `submit` would seal as whichever company matches first. Expected: the second registration is refused with a clear message. Test `test_two_companies_cannot_share_a_public_key` (Task 2).
+1. **Two users enrolling the same public key** — `submit` would seal as whichever company matches first. Expected: the second enrollment is refused with a clear message. Test `test_two_users_cannot_share_a_public_key` (Task 2).
 2. **Values pasted from a Slack code block** (backticks or ``` fences around a line, a proof, or the aggregate JSON). Expected: accepted and stored clean. Tests `test_unfence_strips_slack_code_markup` (Task 2), `test_a_submission_pasted_from_a_slack_code_block_is_accepted` (Task 3), `test_a_proof_and_totals_pasted_with_code_fences_are_accepted` (Task 4).
-3. **`/immap poll` before setup is complete** (fewer than 3 companies, or no admin key). Expected: a plain message instead of a Slack API failure on an empty option list. Test `test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist` (Task 2).
+3. **`/immap poll` before setup is complete** (fewer than 3 companies with an attributed user, or no admin key). Expected: a plain message instead of a Slack API failure on an empty option list. Test `test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist` (Task 2).
 4. **Sloppy hexadecimal in public keys** (`0x` prefix, underscores, signs, spaces; Python's `int(x, 16)` accepts several). Expected: refused. Tests `test_public_key_validation` (Task 1) and `test_pasted_keys_may_carry_backticks_but_not_hex_prefixes` (Task 2).
 5. **Very long poll titles** (Slack block text limits). Expected: refused above 150 characters, and the modal input is limited too. Test `test_titles_are_limited_in_length` (Task 2).
 
@@ -39,7 +39,7 @@ Inputs and conditions the spec implies but does not spell out. Each has a test i
 
 | File | Responsibility |
 |---|---|
-| `src/premday_bot/immap.py` (new) | Protocol: keys, masking, sealing, proofs, `submit`, `aggregate_sealed`, CLI |
+| `src/premday_bot/immap.py` (new) | Protocol: poll templates, keys, masking, sealing, proofs, `submit`, `aggregate_sealed`, CLI |
 | `src/premday_bot/polls.py` (new) | `PollStore` (SQLite) and `PollService` (all rules, no Slack) |
 | `src/premday_bot/immap_views.py` (new) | Modals, poll card, `poll.json` message, report text, chunking |
 | `src/premday_bot/immap_slack.py` (new) | `/immap` command, view/button handlers, sweeper |
@@ -58,7 +58,7 @@ Inputs and conditions the spec implies but does not spell out. Each has a test i
 **Interfaces:**
 - Consumes: nothing (standard library only).
 - Produces (used by every later task):
-  - constants `SCHEMA_VERSION: int`, `PROTOCOL: str`, `MODULUS: int`, `MAX_VALUE: int`, `METRICS: dict[str, str]`
+  - constants `PROTOCOL: str`, `MODULUS: int`, `MAX_VALUE: int`, `PollTemplate` (frozen dataclass: `id, title, version, description, metrics: dict[str, str]`), `POLL_TEMPLATES: dict[str, PollTemplate]`, `DEFAULT_TEMPLATE: str`
   - `metric_ids(metrics) -> list[str]`, `generate_private_key() -> int`, `public_key(private_key: int) -> str` (lowercase hex), `parse_public_key(value: str) -> int` (raises `ValueError`), `fingerprint(public_key_hex: str) -> str`, `fingerprints(poll: dict) -> dict[str, str]`
   - `seal(plaintext: bytes, admins: list[dict]) -> dict`, `unseal(envelope: dict, private_key: int) -> bytes`
   - `submit(poll: dict, private_key: int, values: dict[str, Any]) -> str` (returns `immap2.<poll_id>.<company_id>.<base64url envelope>`)
@@ -66,7 +66,7 @@ Inputs and conditions the spec implies but does not spell out. Each has a test i
   - `aggregate(metrics, submissions) -> dict[str, int]`, `aggregate_sealed(poll: dict, lines: list[str], private_key: int, nonce: str) -> dict` (`{"totals", "proof"}`)
   - `totals_digest(totals) -> str`, `make_proof(private_key, poll, action, argument, nonce) -> str`, `check_proof(bot_private_key, admin_public_key, *, poll_id, action, argument, nonce, proof) -> bool`
   - `main(argv=None) -> int` with subcommands `keygen`, `submit`, `aggregate`, `proof`
-  - The `poll` dict ("poll.json") has keys `poll_id`, `schema_version`, `metrics`, `participants` (`[{company_id, public_key}]`), `admins` (`[{admin_id, public_key}]`), `bot_public_key`, `deadline`.
+  - The `poll` dict ("poll.json") has keys `poll_id`, `template`, `schema_version`, `metrics`, `participants` (`[{company_id, public_key}]`), `admins` (`[{admin_id, public_key}]`), `bot_public_key`, `deadline`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -76,12 +76,14 @@ Create `tests/test_immap.py`:
 import ast
 import json
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from helpers import TEMPLATE_METRICS
 from premday_bot import immap
 
 
@@ -92,7 +94,7 @@ def make_poll(count: int, admin_count: int = 2):
     poll = {
         "poll_id": "poll1",
         "schema_version": 1,
-        "metrics": dict(immap.METRICS),
+        "metrics": dict(TEMPLATE_METRICS),
         "participants": [
             {"company_id": c, "public_key": immap.public_key(k)} for c, k in company_keys.items()
         ],
@@ -106,7 +108,7 @@ def make_poll(count: int, admin_count: int = 2):
 
 
 def random_values(rng: random.Random) -> dict[str, int]:
-    return {name: rng.randrange(10**6) for name in immap.METRICS}
+    return {name: rng.randrange(10**6) for name in TEMPLATE_METRICS}
 
 
 def test_group_prime_is_a_safe_prime() -> None:
@@ -124,7 +126,7 @@ def test_masks_cancel_and_totals_equal_the_plain_sum(count: int) -> None:
     values = {c: random_values(rng) for c in company_keys}
     lines = [immap.submit(poll, key, values[c]) for c, key in company_keys.items()]
     result = immap.aggregate_sealed(poll, lines, admin_keys[0], "nonce1")
-    expected = {n: sum(v[n] for v in values.values()) for n in immap.METRICS}
+    expected = {n: sum(v[n] for v in values.values()) for n in TEMPLATE_METRICS}
     assert result["totals"] == expected
 
 
@@ -140,7 +142,7 @@ def test_every_admin_can_open_the_submissions() -> None:
 def test_a_single_submission_does_not_reveal_the_value() -> None:
     poll, company_keys, admin_keys, _ = make_poll(4)
     key = next(iter(company_keys.values()))
-    values = {name: 5 for name in immap.METRICS}
+    values = {name: 5 for name in TEMPLATE_METRICS}
     _, _, numbers = immap.open_line(immap.submit(poll, key, values), admin_keys[0])
     assert all(number != 5 for number in numbers)
 
@@ -151,7 +153,7 @@ def test_participant_order_does_not_change_the_result() -> None:
     shuffled = {**poll, "participants": list(reversed(poll["participants"]))}
     lines = [immap.submit(shuffled, key, values[c]) for c, key in company_keys.items()]
     totals = immap.aggregate_sealed(poll, lines, admin_keys[0], "n")["totals"]
-    assert totals == {n: sum(v[n] for v in values.values()) for n in immap.METRICS}
+    assert totals == {n: sum(v[n] for v in values.values()) for n in TEMPLATE_METRICS}
 
 
 def test_non_admin_cannot_open_a_submission() -> None:
@@ -176,7 +178,7 @@ def test_tampered_submission_fails_its_integrity_check() -> None:
 def test_submit_rejects_bad_input() -> None:
     poll, company_keys, _, _ = make_poll(3)
     key = next(iter(company_keys.values()))
-    good: dict[str, Any] = {name: 1 for name in immap.METRICS}
+    good: dict[str, Any] = {name: 1 for name in TEMPLATE_METRICS}
     with pytest.raises(ValueError, match="missing"):
         immap.submit(poll, key, {k: v for k, v in good.items() if k != "host_count"})
     with pytest.raises(ValueError, match="extra"):
@@ -214,13 +216,13 @@ def test_check_envelope_accepts_good_and_rejects_bad() -> None:
     line = immap.submit(poll, next(iter(company_keys.values())), random_values(random.Random(0)))
     _, _, envelope = immap.parse_line(line)
     fingerprints = {immap.fingerprint(a["public_key"]) for a in poll["admins"]}
-    immap.check_envelope(envelope, len(immap.METRICS), fingerprints)
+    immap.check_envelope(envelope, len(TEMPLATE_METRICS), fingerprints)
     with pytest.raises(ValueError, match="number of values"):
         immap.check_envelope(envelope, 3, fingerprints)
     with pytest.raises(ValueError, match="admin keys"):
-        immap.check_envelope(envelope, len(immap.METRICS), set())
+        immap.check_envelope(envelope, len(TEMPLATE_METRICS), set())
     with pytest.raises(ValueError, match="malformed"):
-        immap.check_envelope({}, len(immap.METRICS), fingerprints)
+        immap.check_envelope({}, len(TEMPLATE_METRICS), fingerprints)
 
 
 def test_aggregate_requires_every_participant_exactly_once() -> None:
@@ -266,12 +268,20 @@ def test_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     poll["participants"].append(own_company)
     poll["admins"] = [{"admin_id": "me-admin", "public_key": public_keys[0]}]
     (tmp_path / "poll.json").write_text(json.dumps(poll))
-    (tmp_path / "values.json").write_text(json.dumps({n: 2 for n in immap.METRICS}))
+    (tmp_path / "values.json").write_text(json.dumps({n: 2 for n in TEMPLATE_METRICS}))
     capsys.readouterr()
-    assert immap.main(
-        ["submit", str(tmp_path / "poll.json"), str(tmp_path / "values.json"),
-         "--key", str(company_key_path)]
-    ) == 0
+    assert (
+        immap.main(
+            [
+                "submit",
+                str(tmp_path / "poll.json"),
+                str(tmp_path / "values.json"),
+                "--key",
+                str(company_key_path),
+            ]
+        )
+        == 0
+    )
     captured = capsys.readouterr()
     assert "me:" in captured.err
     poll_id, company_id, envelope = immap.parse_line(captured.out.strip())
@@ -282,27 +292,60 @@ def test_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
 def test_cli_aggregate_and_proof(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     poll, company_keys, admin_keys, bot_key = make_poll(3, admin_count=1)
     (tmp_path / "poll.json").write_text(json.dumps(poll))
-    lines = [immap.submit(poll, k, {n: 1 for n in immap.METRICS}) for k in company_keys.values()]
+    lines = [immap.submit(poll, k, {n: 1 for n in TEMPLATE_METRICS}) for k in company_keys.values()]
     (tmp_path / "lines.txt").write_text("\n".join(lines) + "\n")
     (tmp_path / "admin.key").write_text(format(admin_keys[0], "x") + "\n")
     base = [str(tmp_path / "poll.json")]
-    assert immap.main(
-        ["aggregate", *base, str(tmp_path / "lines.txt"), "--nonce", "n9",
-         "--key", str(tmp_path / "admin.key")]
-    ) == 0
+    assert (
+        immap.main(
+            [
+                "aggregate",
+                *base,
+                str(tmp_path / "lines.txt"),
+                "--nonce",
+                "n9",
+                "--key",
+                str(tmp_path / "admin.key"),
+            ]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert set(result["totals"].values()) == {3}
     assert immap.check_proof(
-        bot_key, immap.public_key(admin_keys[0]), poll_id="poll1", action="done",
-        argument=immap.totals_digest(result["totals"]), nonce="n9", proof=result["proof"],
+        bot_key,
+        immap.public_key(admin_keys[0]),
+        poll_id="poll1",
+        action="done",
+        argument=immap.totals_digest(result["totals"]),
+        nonce="n9",
+        proof=result["proof"],
     )
-    assert immap.main(
-        ["proof", *base, "--action", "extend", "--argument", "2026-12-01", "--nonce", "n9",
-         "--key", str(tmp_path / "admin.key")]
-    ) == 0
+    assert (
+        immap.main(
+            [
+                "proof",
+                *base,
+                "--action",
+                "extend",
+                "--argument",
+                "2026-12-01",
+                "--nonce",
+                "n9",
+                "--key",
+                str(tmp_path / "admin.key"),
+            ]
+        )
+        == 0
+    )
     assert immap.check_proof(
-        bot_key, immap.public_key(admin_keys[0]), poll_id="poll1", action="extend",
-        argument="2026-12-01", nonce="n9", proof=capsys.readouterr().out.strip(),
+        bot_key,
+        immap.public_key(admin_keys[0]),
+        poll_id="poll1",
+        action="extend",
+        argument="2026-12-01",
+        nonce="n9",
+        proof=capsys.readouterr().out.strip(),
     )
     assert immap.main(["aggregate", *base, str(tmp_path / "missing.txt"), "--nonce", "n"]) == 1
 
@@ -316,6 +359,71 @@ def test_module_uses_only_the_standard_library() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert imported <= set(sys.stdlib_module_names)
+
+
+def test_templates_are_well_formed() -> None:
+    assert immap.DEFAULT_TEMPLATE in immap.POLL_TEMPLATES
+    for key, template in immap.POLL_TEMPLATES.items():
+        assert template.id == key and template.version >= 1 and template.title
+        assert template.metrics and len(template.metrics) <= 64
+        for metric, unit in template.metrics.items():
+            assert re.fullmatch(r"[a-z][a-z0-9_]*", metric) and unit
+
+
+def test_infra_footprint_covers_the_pr_and_its_review() -> None:
+    metrics = immap.POLL_TEMPLATES["infra-footprint"].metrics
+    original = {
+        "cpu_core_count",
+        "dimm_memory",
+        "gpu_card_count",
+        "cdu_count",
+        "openbmc_host_count",
+        "host_count",
+        "global_power_consumption",
+        "datacenter_room_count",
+    }
+    review = {
+        "gpu_vram",  # GPUs need VRAM too
+        "rack_count",
+        "rack_unit_count",  # racks, with RU because rack height varies
+        "hdd_sata_capacity",
+        "ssd_sata_capacity",
+        "ssd_nvme_capacity",  # disks by technology
+        "nic_count",
+        "accelerator_card_count",
+        "optics_count",
+        "fiber_cable_count",
+        "copper_cable_count",
+        "psu_silver_count",
+        "psu_gold_count",
+        "psu_platinum_count",
+        "ocp_21in_host_count",
+    }
+    assert original | review == set(metrics)
+    assert not {m for m in metrics if "read_intensive" in m or "write_intensive" in m}
+    assert metrics["gpu_vram"] == "TiB" and metrics["rack_unit_count"] == "RU"
+
+
+def test_sealed_line_with_the_largest_template_and_five_admins_fits_a_modal_field() -> None:
+    metrics = immap.POLL_TEMPLATES["infra-footprint"].metrics
+    company = immap.generate_private_key()
+    others = [immap.generate_private_key() for _ in range(2)]
+    poll = {
+        "poll_id": "abc123abc123",
+        "schema_version": 1,
+        "metrics": metrics,
+        "participants": [
+            {"company_id": f"c{i}", "public_key": immap.public_key(key)}
+            for i, key in enumerate([company, *others])
+        ],
+        "admins": [
+            {"admin_id": f"a{i}", "public_key": immap.public_key(immap.generate_private_key())}
+            for i in range(5)
+        ],
+        "bot_public_key": immap.public_key(immap.generate_private_key()),
+        "deadline": "2026-12-01",
+    }
+    assert len(immap.submit(poll, company, dict.fromkeys(metrics, 1))) < 3000
 ````
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -343,28 +451,67 @@ import json
 import os
 import secrets
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
 PROTOCOL = "immap2"
 MODULUS = 1 << 64
 MAX_VALUE = 1 << 48
 
-METRICS: dict[str, str] = {
-    "cpu_core_count": "cores",
-    "dimm_memory": "TiB",
-    "gpu_card_count": "cards",
-    "hdd_total_capacity": "TiB",
-    "ssd_read_intensive_capacity": "TiB",
-    "ssd_mixed_use_capacity": "TiB",
-    "ssd_write_intensive_capacity": "TiB",
-    "cdu_count": "units",
-    "openbmc_host_count": "hosts",
-    "host_count": "hosts",
-    "global_power_consumption": "kW",
-    "datacenter_room_count": "rooms",
-}
+
+@dataclass(frozen=True)
+class PollTemplate:
+    """A fixed list of metrics a poll asks every company; ``version`` changes with the list."""
+
+    id: str
+    title: str
+    version: int
+    description: str
+    metrics: dict[str, str]  # metric id -> unit
+
+
+# Metrics of the original IMMAP proposal (premday/usergroup PR #2), amended with what the
+# reviewers of that PR asked for: GPU VRAM, racks (with rack units, since racks vary in height),
+# disks split by technology instead of endurance class, NICs, accelerators, PSU levels, optics,
+# cabling and 21"/OCP servers.
+INFRA_FOOTPRINT = PollTemplate(
+    id="infra-footprint",
+    title="Infrastructure footprint",
+    version=1,
+    description=(
+        "Fleet size, compute, memory, storage, network and power. Count what you run in "
+        "production, round capacities up to whole TiB, and answer 0 for \"none\"."
+    ),
+    metrics={
+        "datacenter_room_count": "rooms",
+        "rack_count": "racks",
+        "rack_unit_count": "RU",
+        "global_power_consumption": "kW",
+        "cdu_count": "units",
+        "host_count": "hosts",
+        "openbmc_host_count": "hosts",
+        "ocp_21in_host_count": "hosts",
+        "cpu_core_count": "cores",
+        "dimm_memory": "TiB",
+        "gpu_card_count": "cards",
+        "gpu_vram": "TiB",
+        "accelerator_card_count": "cards",
+        "hdd_sata_capacity": "TiB",
+        "ssd_sata_capacity": "TiB",
+        "ssd_nvme_capacity": "TiB",
+        "nic_count": "cards",
+        "optics_count": "modules",
+        "fiber_cable_count": "cables",
+        "copper_cable_count": "cables",
+        "psu_silver_count": "units",
+        "psu_gold_count": "units",
+        "psu_platinum_count": "units",
+    },
+)
+
+POLL_TEMPLATES: dict[str, PollTemplate] = {INFRA_FOOTPRINT.id: INFRA_FOOTPRINT}
+DEFAULT_TEMPLATE = INFRA_FOOTPRINT.id
 
 # RFC 3526 group 14 (2048-bit MODP), generator 2.
 _P = int(
@@ -697,30 +844,30 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest tests/test_immap.py && uv run ruff check . && uv run pyright`
-Expected: 18 tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: 21 tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/premday_bot/immap.py tests/test_immap.py
-git commit -m "Add IMMAP protocol module: pairwise masking, admin sealing, proofs" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Keep the crypto testable apart from Slack and runnable by anyone" -m "Add immap.py: poll templates, pairwise masks, admin sealing, proofs, CLI." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
-### Task 2: Poll storage, company/admin registration, poll creation
+### Task 2: Poll storage, enrollment, company list, admin keys, poll creation
 
 **Files:**
 - Create: `tests/helpers.py`, `src/premday_bot/polls.py`
 - Test: `tests/test_polls_setup.py`
 
 **Interfaces:**
-- Consumes: from Task 1 `immap.generate_private_key`, `public_key`, `parse_public_key`, `fingerprint`, `SCHEMA_VERSION`, `METRICS`.
+- Consumes: from Task 1 `immap.generate_private_key`, `public_key`, `parse_public_key`, `fingerprint`, `POLL_TEMPLATES`, `DEFAULT_TEMPLATE`.
 - Produces:
   - constants `CREATED, COLLECTING, COMPLETE, INCOMPLETE, DONE`, `MIN_PARTICIPANTS`, `RECOMMENDED_PARTICIPANTS`, `MAX_ADMIN_KEYS`, `MAX_TITLE_LENGTH`, `NONCE_TTL`, `EXTENDABLE`, `ACTION_EXTEND`, `ACTION_DONE`
-  - `PollError(Exception)` (messages are safe to show users), frozen dataclasses `Company(company_id, owner_user_id, public_key)` and `Poll(id, channel_id, creator_user_id, title, schema_version, status, deadline, original_deadline, extension_count, participants, admins, bot_public_key, bot_private_key, message_ts, started_at, last_reminded_at, totals, validated_by, validated_at)` with property `participant_ids`
+  - `PollError(Exception)` (messages are safe to show users), frozen dataclasses `Company(company_id, owner_user_id | None, public_key | None)` (key = the attributed user's enrolled key) and `Poll(id, channel_id, creator_user_id, title, template, schema_version, metrics, status, deadline, original_deadline, extension_count, participants, admins, bot_public_key, bot_private_key, message_ts, started_at, last_reminded_at, totals, validated_by, validated_at)` with property `participant_ids`
   - `unfence(text) -> str`, `is_admin(email, admin_emails) -> bool`, `poll_document(poll) -> dict` (the `poll.json`, never containing `bot_private_key`)
-  - `PollStore(db_path)` with `upsert_company`, `get_company`, `list_companies`, `upsert_admin_key`, `admin_keys() -> dict[email, key]`, `save_poll`, `get_poll`, `list_polls(status=None, channel_id=None)`, `put_submission`, `submission_lines(poll_id) -> dict[company_id, line]`, `add_pending`, `pop_pending`
-  - `PollService(store, *, timezone: str, admin_emails: frozenset[str] = frozenset(), clock=...)` with `is_admin`, `register_company(*, company_id, owner_user_id, public_key) -> Company`, `pollable_company_ids() -> list[str]`, `register_admin_key(*, email, public_key) -> str` (fingerprint), `create_poll(*, channel_id, creator_user_id, title, deadline_day: date, participants: list[str]) -> Poll`, `get(poll_id) -> Poll`, `set_message_ts(poll_id, message_ts) -> Poll`
+  - `PollStore(db_path)` with `upsert_enrollment`, `enrollments`, `add_company`, `delete_company`, `set_company_owner`, `get_company`, `list_companies`, `upsert_admin_key`, `admin_keys() -> dict[email, key]`, `save_poll`, `get_poll`, `list_polls(status=None, channel_id=None)`, `put_submission`, `submission_lines(poll_id) -> dict[company_id, line]`, `add_pending`, `pop_pending`
+  - `PollService(store, *, timezone: str, admin_emails: frozenset[str] = frozenset(), clock=...)` with `is_admin`, `enroll(*, user_id, public_key) -> str` (fingerprint), admin-only `add_company`, `remove_company`, `attribute_company(*, email, company_id, user_id) -> Company`, `unattribute_company`, `companies(*, email) -> list[Company]`, `unattributed_users(*, email) -> list[str]` (all keyword-only with `email`), `pollable_company_ids() -> list[str]`, `register_admin_key(*, email, public_key) -> str` (fingerprint), `create_poll(*, channel_id, creator_user_id, title, deadline_day: date, participants: list[str], template: str = immap.DEFAULT_TEMPLATE) -> Poll` (unknown template raises `PollError`), `get(poll_id) -> Poll`, `set_message_ts(poll_id, message_ts) -> Poll`
   - test helpers: `Clock`, `World` (fields `service, store, clock, company_keys, admin_keys`; methods `new_poll`, `collecting_poll`, `line`, `submit`, `complete_poll`, `admin_totals`, `expected_totals`, `extend_proof`), `make_world(tmp_path)`, constants `ADMIN_EMAIL` (Aurélien Rougemont, `a.rougemont@criteo.com`), `SECOND_ADMIN_EMAIL`, `NOT_ADMIN_EMAIL`, `ADMIN_EMAILS`, `COMPANIES`, `owner(company_id)`, `values_for(company_id)`
 
 - [ ] **Step 1: Write the test helpers and the failing tests**
@@ -742,6 +889,7 @@ SECOND_ADMIN_EMAIL = "second.admin@example.com"
 NOT_ADMIN_EMAIL = "someone@example.com"
 ADMIN_EMAILS = frozenset({ADMIN_EMAIL, SECOND_ADMIN_EMAIL})
 COMPANIES = ("acme", "bolt", "corp")
+TEMPLATE_METRICS = immap.POLL_TEMPLATES[immap.DEFAULT_TEMPLATE].metrics
 START = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 
 
@@ -762,7 +910,7 @@ def owner(company_id: str) -> str:
 
 def values_for(company_id: str) -> dict[str, int]:
     base = sum(company_id.encode())
-    return {name: base + index for index, name in enumerate(sorted(immap.METRICS))}
+    return {name: base + index for index, name in enumerate(sorted(TEMPLATE_METRICS))}
 
 
 @dataclass
@@ -815,13 +963,20 @@ class World:
 
     def expected_totals(self) -> dict[str, int]:
         return {
-            name: sum(values_for(c)[name] for c in COMPANIES) for name in immap.METRICS
+            name: sum(values_for(c)[name] for c in COMPANIES) for name in TEMPLATE_METRICS
         }
 
     def extend_proof(self, poll: Poll, email: str, day: date, nonce: str) -> str:
         return immap.make_proof(
             self.admin_keys[email], poll_document(poll), "extend", day.isoformat(), nonce
         )
+
+
+def enroll_and_attribute(service: PollService, company_id: str, public_key: str) -> None:
+    """A user enrolls, an admin adds the company and attributes it to that user."""
+    service.enroll(user_id=owner(company_id), public_key=public_key)
+    service.add_company(email=ADMIN_EMAIL, company_id=company_id)
+    service.attribute_company(email=ADMIN_EMAIL, company_id=company_id, user_id=owner(company_id))
 
 
 def make_world(tmp_path: Path, companies: tuple[str, ...] = COMPANIES) -> World:
@@ -832,9 +987,7 @@ def make_world(tmp_path: Path, companies: tuple[str, ...] = COMPANIES) -> World:
     )
     company_keys = {c: immap.generate_private_key() for c in companies}
     for company_id, key in company_keys.items():
-        service.register_company(
-            company_id=company_id, owner_user_id=owner(company_id), public_key=immap.public_key(key)
-        )
+        enroll_and_attribute(service, company_id, immap.public_key(key))
     admin_keys = {e: immap.generate_private_key() for e in (ADMIN_EMAIL, SECOND_ADMIN_EMAIL)}
     for email, key in admin_keys.items():
         service.register_admin_key(email=email, public_key=immap.public_key(key))
@@ -844,7 +997,8 @@ def make_world(tmp_path: Path, companies: tuple[str, ...] = COMPANIES) -> World:
 Create `tests/test_polls_setup.py`:
 
 ````python
-from datetime import timedelta
+from dataclasses import replace
+from datetime import date, timedelta
 
 import pytest
 
@@ -854,6 +1008,8 @@ from helpers import (
     COMPANIES,
     NOT_ADMIN_EMAIL,
     SECOND_ADMIN_EMAIL,
+    TEMPLATE_METRICS,
+    enroll_and_attribute,
     make_world,
     owner,
 )
@@ -879,22 +1035,109 @@ def test_admin_is_decided_by_email_case_insensitively() -> None:
     assert not is_admin("a.rougemont@criteo.com", frozenset())
 
 
-def test_company_registration_rules(tmp_path) -> None:
+def owner_of(service: PollService, company_id: str) -> str | None:
+    companies = {c.company_id: c for c in service.companies(email=ADMIN_EMAIL)}
+    return companies[company_id].owner_user_id
+
+
+def test_enrolling_needs_a_valid_key_and_unique_keys(tmp_path) -> None:
     world = make_world(tmp_path)
     key = immap.public_key(immap.generate_private_key())
-    with pytest.raises(PollError, match="already registered"):
-        world.service.register_company(company_id="acme", owner_user_id="U_OTHER", public_key=key)
+    assert world.service.enroll(user_id="U_NEW", public_key=key) == immap.fingerprint(key)
+    with pytest.raises(PollError, match="already enrolled"):
+        world.service.enroll(user_id="U_OTHER", public_key=key)
+    with pytest.raises(PollError, match="Invalid public key"):
+        world.service.enroll(user_id="U_NEW", public_key="zz")
+    # Enrolling again replaces your key (rotation); the attributed company follows it.
+    new_key = immap.public_key(immap.generate_private_key())
+    world.service.enroll(user_id=owner("acme"), public_key=new_key)
+    company = next(c for c in world.service.companies(email=ADMIN_EMAIL) if c.company_id == "acme")
+    assert company.public_key == new_key and company.owner_user_id == owner("acme")
+
+
+def test_admins_manage_the_list_of_companies(tmp_path) -> None:
+    world = make_world(tmp_path)
+    service = world.service
+    service.add_company(email=ADMIN_EMAIL, company_id="newco")
+    with pytest.raises(PollError, match="already exists"):
+        service.add_company(email=ADMIN_EMAIL, company_id="newco")
     for bad_id in ("A", "x", "has space", "UPPER", "a" * 33):
         with pytest.raises(PollError, match="company id"):
-            world.service.register_company(company_id=bad_id, owner_user_id="U1", public_key=key)
-    with pytest.raises(PollError, match="Invalid public key"):
-        world.service.register_company(company_id="newco", owner_user_id="U1", public_key="zz")
-    # The owner can rotate their key.
-    new_key = immap.public_key(immap.generate_private_key())
-    company = world.service.register_company(
-        company_id="acme", owner_user_id=owner("acme"), public_key=new_key
-    )
-    assert company.public_key == new_key
+            service.add_company(email=ADMIN_EMAIL, company_id=bad_id)
+    listed = {c.company_id: c for c in service.companies(email=SECOND_ADMIN_EMAIL)}
+    assert set(listed) == {*COMPANIES, "newco"}
+    assert listed["newco"].owner_user_id is None and listed["newco"].public_key is None
+    service.remove_company(email=ADMIN_EMAIL, company_id="newco")
+    assert "newco" not in {c.company_id for c in service.companies(email=ADMIN_EMAIL)}
+    with pytest.raises(PollError, match="does not exist"):
+        service.remove_company(email=ADMIN_EMAIL, company_id="newco")
+
+
+def test_admins_attribute_companies_to_enrolled_users(tmp_path) -> None:
+    world = make_world(tmp_path)
+    service = world.service
+    key = immap.public_key(immap.generate_private_key())
+    service.add_company(email=ADMIN_EMAIL, company_id="newco")
+    with pytest.raises(PollError, match="has not enrolled"):
+        service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_NEW")
+    service.enroll(user_id="U_NEW", public_key=key)
+    assert service.unattributed_users(email=ADMIN_EMAIL) == ["U_NEW"]
+    company = service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_NEW")
+    assert (company.owner_user_id, company.public_key) == ("U_NEW", key)
+    assert service.unattributed_users(email=ADMIN_EMAIL) == []
+    assert owner_of(service, "newco") == "U_NEW"
+    with pytest.raises(PollError, match="does not exist"):
+        service.attribute_company(email=ADMIN_EMAIL, company_id="ghost", user_id="U_NEW")
+    # One company per user; reassigning a company replaces its user.
+    with pytest.raises(PollError, match="already answers for `newco`"):
+        service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW")
+    service.unattribute_company(email=ADMIN_EMAIL, company_id="newco")
+    assert owner_of(service, "newco") is None
+    service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW")
+    assert owner_of(service, "acme") == "U_NEW"
+    assert service.unattributed_users(email=ADMIN_EMAIL) == [owner("acme")]
+
+
+def test_company_management_is_for_admins_only(tmp_path) -> None:
+    world = make_world(tmp_path)
+    service = world.service
+    for email in (NOT_ADMIN_EMAIL, None):
+        for call in (
+            lambda e=email: service.add_company(email=e, company_id="newco"),
+            lambda e=email: service.remove_company(email=e, company_id="acme"),
+            lambda e=email: service.attribute_company(email=e, company_id="acme", user_id="U1"),
+            lambda e=email: service.unattribute_company(email=e, company_id="acme"),
+            lambda e=email: service.companies(email=e),
+            lambda e=email: service.unattributed_users(email=e),
+        ):
+            with pytest.raises(PollError, match="Only admins"):
+                call()
+    assert len(service.companies(email=ADMIN_EMAIL)) == len(COMPANIES)
+
+
+def test_companies_in_an_open_poll_cannot_change_until_it_is_done(tmp_path) -> None:
+    world = make_world(tmp_path)
+    service = world.service
+    poll = world.new_poll()
+    service.enroll(user_id="U_NEW", public_key=immap.public_key(immap.generate_private_key()))
+    for call in (
+        lambda: service.remove_company(email=ADMIN_EMAIL, company_id="acme"),
+        lambda: service.unattribute_company(email=ADMIN_EMAIL, company_id="acme"),
+        lambda: service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW"),
+    ):
+        with pytest.raises(PollError, match=f"open poll `{poll.id}`"):
+            call()
+    # A company that is not in that poll is free to change.
+    service.add_company(email=ADMIN_EMAIL, company_id="other")
+    service.remove_company(email=ADMIN_EMAIL, company_id="other")
+
+
+def test_a_company_without_a_user_cannot_join_a_poll(tmp_path) -> None:
+    world = make_world(tmp_path)
+    world.service.add_company(email=ADMIN_EMAIL, company_id="empty")
+    with pytest.raises(PollError, match="no user attributed"):
+        world.new_poll(participants=[*COMPANIES, "empty"])
+    assert "empty" not in world.service.pollable_company_ids()
 
 
 def test_only_admins_can_register_admin_keys_and_the_number_is_capped(tmp_path) -> None:
@@ -927,10 +1170,8 @@ def test_create_poll_snapshots_keys_and_starts_in_created(tmp_path) -> None:
     assert [email for email, _ in poll.admins] == sorted([ADMIN_EMAIL, SECOND_ADMIN_EMAIL])
     assert poll.deadline.tzinfo is not None and poll.deadline == poll.original_deadline
     # Rotating a company key later does not change an existing poll.
-    world.service.register_company(
-        company_id="acme",
-        owner_user_id=owner("acme"),
-        public_key=immap.public_key(immap.generate_private_key()),
+    world.service.enroll(
+        user_id=owner("acme"), public_key=immap.public_key(immap.generate_private_key())
     )
     assert world.service.get(poll.id).participants == poll.participants
 
@@ -941,7 +1182,7 @@ def test_poll_document_never_contains_private_material(tmp_path) -> None:
     document = poll_document(poll)
     assert document["bot_public_key"] == poll.bot_public_key
     assert poll.bot_private_key not in str(document)
-    assert set(document["metrics"]) == set(immap.METRICS)
+    assert set(document["metrics"]) == set(TEMPLATE_METRICS)
     assert [p["company_id"] for p in document["participants"]] == sorted(COMPANIES)
 
 
@@ -954,7 +1195,7 @@ def test_create_poll_validation(tmp_path) -> None:
         service.create_poll(**base, participants=["acme", "bolt"])
     with pytest.raises(PollError, match="at least 3"):
         service.create_poll(**base, participants=["acme", "acme", "bolt"])
-    with pytest.raises(PollError, match="not registered"):
+    with pytest.raises(PollError, match="does not exist"):
         service.create_poll(**base, participants=["acme", "bolt", "ghost"])
     with pytest.raises(PollError, match="title"):
         service.create_poll(**{**base, "title": "  "}, participants=list(COMPANIES))
@@ -967,12 +1208,7 @@ def test_create_poll_needs_an_admin_key(tmp_path) -> None:
     store = PollStore(tmp_path / "noadmin.sqlite3")
     service = PollService(store, timezone="UTC", admin_emails=ADMIN_EMAILS)
     for company_id in COMPANIES:
-        service.register_company(
-            company_id=company_id,
-            owner_user_id=owner(company_id),
-            public_key=immap.public_key(immap.generate_private_key()),
-        )
-    from datetime import date
+        enroll_and_attribute(service, company_id, immap.public_key(immap.generate_private_key()))
 
     with pytest.raises(PollError, match="admin"):
         service.create_poll(
@@ -992,14 +1228,10 @@ def test_pollable_companies_are_listed_sorted(tmp_path) -> None:
 def test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist(tmp_path) -> None:
     store = PollStore(tmp_path / "early.sqlite3")
     service = PollService(store, timezone="UTC", admin_emails=ADMIN_EMAILS)
-    with pytest.raises(PollError, match="At least 3 companies"):
+    with pytest.raises(PollError, match="At least 3 companies need an attributed user"):
         service.pollable_company_ids()
     for company_id in COMPANIES:
-        service.register_company(
-            company_id=company_id,
-            owner_user_id=owner(company_id),
-            public_key=immap.public_key(immap.generate_private_key()),
-        )
+        enroll_and_attribute(service, company_id, immap.public_key(immap.generate_private_key()))
     with pytest.raises(PollError, match="No admin has registered a key"):
         service.pollable_company_ids()
     service.register_admin_key(
@@ -1008,31 +1240,27 @@ def test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist(tmp_p
     assert service.pollable_company_ids() == sorted(COMPANIES)
 
 
-def test_two_companies_cannot_share_a_public_key(tmp_path) -> None:
+def test_two_users_cannot_share_a_public_key(tmp_path) -> None:
     world = make_world(tmp_path)
     shared = immap.public_key(world.company_keys["acme"])
-    with pytest.raises(PollError, match="already registered by `acme`"):
-        world.service.register_company(
-            company_id="twin", owner_user_id="U_TWIN", public_key=shared
-        )
-    # Re-registering your own key is fine.
-    world.service.register_company(
-        company_id="acme", owner_user_id=owner("acme"), public_key=shared
-    )
+    with pytest.raises(PollError, match="already enrolled by another"):
+        world.service.enroll(user_id="U_TWIN", public_key=shared)
+    # Enrolling your own key again is fine.
+    world.service.enroll(user_id=owner("acme"), public_key=shared)
 
 
 def test_pasted_keys_may_carry_backticks_but_not_hex_prefixes(tmp_path) -> None:
     world = make_world(tmp_path)
     key = immap.public_key(immap.generate_private_key())
-    company = world.service.register_company(
-        company_id="newco", owner_user_id="U_NEW", public_key=f"`{key}`"
+    world.service.enroll(user_id="U_NEW", public_key=f"`{key}`")
+    world.service.add_company(email=ADMIN_EMAIL, company_id="newco")
+    company = world.service.attribute_company(
+        email=ADMIN_EMAIL, company_id="newco", user_id="U_NEW"
     )
     assert company.public_key == key
     for bad in ("0x" + key, key[:10] + "_" + key[10:], "", "   "):
         with pytest.raises(PollError, match="Invalid public key"):
-            world.service.register_company(
-                company_id="other", owner_user_id="U_O", public_key=bad
-            )
+            world.service.enroll(user_id="U_O", public_key=bad)
 
 
 def test_titles_are_limited_in_length(tmp_path) -> None:
@@ -1050,11 +1278,42 @@ def test_titles_are_limited_in_length(tmp_path) -> None:
         ("`abc`", "abc"),
         ("```abc```", "abc"),
         ("```\nabc\n```", "abc"),
-        ("```json\n{\"a\": 1}\n```", '{"a": 1}'),
+        ('```json\n{"a": 1}\n```', '{"a": 1}'),
     ],
 )
 def test_unfence_strips_slack_code_markup(raw: str, expected: str) -> None:
     assert unfence(raw) == expected
+
+
+def test_poll_snapshots_its_template(tmp_path) -> None:
+    world = make_world(tmp_path)
+    poll = world.new_poll()
+    template = immap.POLL_TEMPLATES[immap.DEFAULT_TEMPLATE]
+    assert (poll.template, poll.schema_version) == (template.id, template.version)
+    assert poll.metrics == template.metrics
+    assert poll_document(poll)["template"] == template.id
+    # A later edit of the template must not change a poll that already exists.
+    edited = {**template.metrics, "extra_metric": "units"}
+    immap.POLL_TEMPLATES[template.id] = replace(template, version=2, metrics=edited)
+    try:
+        stored = world.service.get(poll.id)
+        assert stored.metrics == template.metrics and stored.schema_version == 1
+        assert "extra_metric" not in poll_document(stored)["metrics"]
+    finally:
+        immap.POLL_TEMPLATES[template.id] = template
+
+
+def test_create_poll_rejects_an_unknown_template(tmp_path) -> None:
+    world = make_world(tmp_path)
+    with pytest.raises(PollError, match="template"):
+        world.service.create_poll(
+            channel_id="C1",
+            creator_user_id=owner("acme"),
+            title="Infra",
+            deadline_day=date(2026, 12, 1),
+            participants=list(COMPANIES),
+            template="nope",
+        )
 ````
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1107,8 +1366,8 @@ class PollError(Exception):
 @dataclass(frozen=True)
 class Company:
     company_id: str
-    owner_user_id: str
-    public_key: str
+    owner_user_id: str | None  # the Slack user an admin attributed the company to
+    public_key: str | None  # that user's enrolled key; None while nobody is attributed
 
 
 @dataclass(frozen=True)
@@ -1117,7 +1376,9 @@ class Poll:
     channel_id: str
     creator_user_id: str
     title: str
-    schema_version: int
+    template: str
+    schema_version: int  # version of the template the poll was created from
+    metrics: dict[str, str]  # snapshot of the template's metrics (metric id -> unit)
     status: str
     deadline: datetime
     original_deadline: datetime
@@ -1157,8 +1418,9 @@ def poll_document(poll: Poll) -> dict:
     """The ``poll.json`` participants feed to ``immap.py``; never includes private material."""
     return {
         "poll_id": poll.id,
+        "template": poll.template,
         "schema_version": poll.schema_version,
-        "metrics": dict(immap.METRICS),
+        "metrics": dict(poll.metrics),
         "participants": [
             {"company_id": company_id, "public_key": key} for company_id, key in poll.participants
         ],
@@ -1188,10 +1450,17 @@ class PollStore:
         with self._connect() as connection:
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS enrollments (
+                    user_id TEXT PRIMARY KEY,
+                    public_key TEXT NOT NULL UNIQUE
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS companies (
                     company_id TEXT PRIMARY KEY,
-                    owner_user_id TEXT NOT NULL,
-                    public_key TEXT NOT NULL
+                    owner_user_id TEXT UNIQUE
                 )
                 """
             )
@@ -1210,7 +1479,9 @@ class PollStore:
                     channel_id TEXT NOT NULL,
                     creator_user_id TEXT NOT NULL,
                     title TEXT NOT NULL,
+                    template TEXT NOT NULL,
                     schema_version INTEGER NOT NULL,
+                    metrics TEXT NOT NULL,
                     status TEXT NOT NULL,
                     deadline TEXT NOT NULL,
                     original_deadline TEXT NOT NULL,
@@ -1251,26 +1522,49 @@ class PollStore:
                 """
             )
 
-    def upsert_company(self, company: Company) -> None:
+    def upsert_enrollment(self, user_id: str, public_key: str) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO companies (company_id, owner_user_id, public_key) VALUES (?, ?, ?)
-                ON CONFLICT(company_id) DO UPDATE SET public_key = excluded.public_key
+                INSERT INTO enrollments (user_id, public_key) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET public_key = excluded.public_key
                 """,
-                (company.company_id, company.owner_user_id, company.public_key),
+                (user_id, public_key),
+            )
+
+    def enrollments(self) -> dict[str, str]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM enrollments ORDER BY user_id").fetchall()
+        return {row["user_id"]: row["public_key"] for row in rows}
+
+    def add_company(self, company_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO companies (company_id) VALUES (?)", (company_id,))
+
+    def delete_company(self, company_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM companies WHERE company_id = ?", (company_id,))
+
+    def set_company_owner(self, company_id: str, owner_user_id: str | None) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE companies SET owner_user_id = ? WHERE company_id = ?",
+                (owner_user_id, company_id),
             )
 
     def get_company(self, company_id: str) -> Company | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM companies WHERE company_id = ?", (company_id,)
-            ).fetchone()
-        return Company(row["company_id"], row["owner_user_id"], row["public_key"]) if row else None
+        return next((c for c in self.list_companies() if c.company_id == company_id), None)
 
     def list_companies(self) -> list[Company]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT * FROM companies ORDER BY company_id").fetchall()
+            rows = connection.execute(
+                """
+                SELECT companies.company_id, companies.owner_user_id, enrollments.public_key
+                FROM companies LEFT JOIN enrollments
+                    ON enrollments.user_id = companies.owner_user_id
+                ORDER BY companies.company_id
+                """
+            ).fetchall()
         return [Company(r["company_id"], r["owner_user_id"], r["public_key"]) for r in rows]
 
     def upsert_admin_key(self, admin_email: str, public_key: str) -> None:
@@ -1293,18 +1587,20 @@ class PollStore:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO immap_polls (
-                    id, channel_id, creator_user_id, title, schema_version, status, deadline,
-                    original_deadline, extension_count, participants, admins, bot_public_key,
-                    bot_private_key, message_ts, started_at, last_reminded_at, totals,
-                    validated_by, validated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, channel_id, creator_user_id, title, template, schema_version, metrics,
+                    status, deadline, original_deadline, extension_count, participants, admins,
+                    bot_public_key, bot_private_key, message_ts, started_at, last_reminded_at,
+                    totals, validated_by, validated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     poll.id,
                     poll.channel_id,
                     poll.creator_user_id,
                     poll.title,
+                    poll.template,
                     poll.schema_version,
+                    json.dumps(poll.metrics),
                     poll.status,
                     poll.deadline.isoformat(),
                     poll.original_deadline.isoformat(),
@@ -1390,7 +1686,9 @@ def _row_to_poll(row: sqlite3.Row) -> Poll:
         channel_id=row["channel_id"],
         creator_user_id=row["creator_user_id"],
         title=row["title"],
+        template=row["template"],
         schema_version=row["schema_version"],
+        metrics=json.loads(row["metrics"]),
         status=row["status"],
         deadline=datetime.fromisoformat(row["deadline"]),
         original_deadline=datetime.fromisoformat(row["original_deadline"]),
@@ -1438,30 +1736,87 @@ class PollService:
             raise PollError("Only admins can do this.")
         return email.strip().lower()
 
-    def register_company(self, *, company_id: str, owner_user_id: str, public_key: str) -> Company:
+    def enroll(self, *, user_id: str, public_key: str) -> str:
+        """A Slack user enrolls with their key; an admin then attributes a company to them."""
+        key = _normalized_key(public_key)
+        for other_user, other_key in self._store.enrollments().items():
+            if other_key == key and other_user != user_id:
+                raise PollError("This public key is already enrolled by another Slack user.")
+        self._store.upsert_enrollment(user_id, key)
+        return immap.fingerprint(key)
+
+    def add_company(self, *, email: str | None, company_id: str) -> None:
+        self._require_admin(email)
         if not _COMPANY_ID.match(company_id):
             raise PollError("A company id uses 2-32 lowercase letters, digits or dashes.")
-        key = _normalized_key(public_key)
+        if self._store.get_company(company_id):
+            raise PollError(f"`{company_id}` already exists.")
+        self._store.add_company(company_id)
+
+    def remove_company(self, *, email: str | None, company_id: str) -> None:
+        self._require_admin(email)
+        self._existing_company(company_id)
+        self._require_no_open_poll(company_id)
+        self._store.delete_company(company_id)
+
+    def attribute_company(self, *, email: str | None, company_id: str, user_id: str) -> Company:
+        """Make an enrolled Slack user the one who answers for a company (replaces the previous)."""
+        self._require_admin(email)
+        self._existing_company(company_id)
+        if user_id not in self._store.enrollments():
+            raise PollError(
+                f"<@{user_id}> has not enrolled yet (`/immap register <public_key>`)."
+            )
         for other in self._store.list_companies():
-            if other.public_key == key and other.company_id != company_id:
-                raise PollError(f"This public key is already registered by `{other.company_id}`.")
-        existing = self._store.get_company(company_id)
-        if existing and existing.owner_user_id != owner_user_id:
-            raise PollError(f"`{company_id}` is already registered by another Slack user.")
-        company = Company(company_id, existing.owner_user_id if existing else owner_user_id, key)
-        self._store.upsert_company(company)
-        return company
+            if other.owner_user_id == user_id and other.company_id != company_id:
+                raise PollError(
+                    f"<@{user_id}> already answers for `{other.company_id}`; unattribute it first."
+                )
+        self._require_no_open_poll(company_id)
+        self._store.set_company_owner(company_id, user_id)
+        return self._existing_company(company_id)
+
+    def unattribute_company(self, *, email: str | None, company_id: str) -> None:
+        self._require_admin(email)
+        self._existing_company(company_id)
+        self._require_no_open_poll(company_id)
+        self._store.set_company_owner(company_id, None)
+
+    def companies(self, *, email: str | None) -> list[Company]:
+        self._require_admin(email)
+        return self._store.list_companies()
+
+    def unattributed_users(self, *, email: str | None) -> list[str]:
+        """Enrolled Slack users no company is attributed to yet."""
+        self._require_admin(email)
+        owners = {c.owner_user_id for c in self._store.list_companies()}
+        return [user for user in self._store.enrollments() if user not in owners]
 
     def pollable_company_ids(self) -> list[str]:
         """Companies a poll can include; fails early when a poll could not be created."""
-        companies = [company.company_id for company in self._store.list_companies()]
+        companies = [c.company_id for c in self._store.list_companies() if c.public_key]
         if len(companies) < MIN_PARTICIPANTS:
             raise PollError(
-                f"At least {MIN_PARTICIPANTS} companies must register first (`/immap register`)."
+                f"At least {MIN_PARTICIPANTS} companies need an attributed user "
+                "(`/immap companies`, `/immap company attribute`)."
             )
         if not any(email in self._admin_emails for email in self._store.admin_keys()):
             raise PollError("No admin has registered a key yet (`/immap admin-register`).")
         return companies
+
+    def _existing_company(self, company_id: str) -> Company:
+        company = self._store.get_company(company_id)
+        if company is None:
+            raise PollError(f"`{company_id}` does not exist.")
+        return company
+
+    def _require_no_open_poll(self, company_id: str) -> None:
+        """A company's key is snapshotted in its polls, so it is frozen until they are done."""
+        for poll in self._store.list_polls():
+            if poll.status != DONE and company_id in poll.participant_ids:
+                raise PollError(
+                    f"`{company_id}` is part of the open poll `{poll.id}`; wait until it is done."
+                )
 
     def register_admin_key(self, *, email: str | None, public_key: str) -> str:
         admin = self._require_admin(email)
@@ -1482,7 +1837,11 @@ class PollService:
         title: str,
         deadline_day: date,
         participants: list[str],
+        template: str = immap.DEFAULT_TEMPLATE,
     ) -> Poll:
+        poll_template = immap.POLL_TEMPLATES.get(template)
+        if poll_template is None:
+            raise PollError("Choose one of the poll templates.")
         title = title.strip()
         if not title:
             raise PollError("Add a title.")
@@ -1495,7 +1854,9 @@ class PollService:
         for company_id in unique:
             company = self._store.get_company(company_id)
             if company is None:
-                raise PollError(f"`{company_id}` is not registered.")
+                raise PollError(f"`{company_id}` does not exist.")
+            if company.public_key is None:
+                raise PollError(f"`{company_id}` has no user attributed yet.")
             pairs.append((company.company_id, company.public_key))
         admins = tuple(
             (email, key)
@@ -1513,7 +1874,9 @@ class PollService:
             channel_id=channel_id,
             creator_user_id=creator_user_id,
             title=title,
-            schema_version=immap.SCHEMA_VERSION,
+            template=poll_template.id,
+            schema_version=poll_template.version,
+            metrics=dict(poll_template.metrics),
             status=CREATED,
             deadline=deadline,
             original_deadline=deadline,
@@ -1564,7 +1927,7 @@ Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existi
 
 ```bash
 git add src/premday_bot/polls.py tests/helpers.py tests/test_polls_setup.py
-git commit -m "Add poll store, company/admin registration and poll creation" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Give polls a durable home and let admins own the company list" -m "Add PollStore/PollService: enrollment, company list and attribution, admin keys, poll creation from a template." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1575,7 +1938,7 @@ git commit -m "Add poll store, company/admin registration and poll creation" -m 
 - Test: `tests/test_polls_collecting.py`
 
 **Interfaces:**
-- Consumes: Task 2 (`PollService`, `PollStore`, `Poll`, `PollError`, `unfence`, `CREATED`, `COLLECTING`, `COMPLETE`, helpers `make_world`, `owner`, `values_for`), Task 1 (`immap.parse_line`, `immap.check_envelope`, `immap.fingerprint`, `immap.seal`, `immap.METRICS`).
+- Consumes: Task 2 (`PollService`, `PollStore`, `Poll`, `PollError`, `unfence`, `CREATED`, `COLLECTING`, `COMPLETE`, helpers `make_world`, `owner`, `values_for`), Task 1 (`immap.parse_line`, `immap.check_envelope`, `immap.fingerprint`, `immap.seal`; tests use `helpers.TEMPLATE_METRICS`).
 - Produces: `PollService.start(poll_id, *, user_id, email) -> Poll`, `submit(poll_id, *, user_id, line) -> Poll` (moves the poll to `complete` when the last company submits; the bot never decrypts anything), `missing(poll) -> list[str]`, `submitted(poll) -> list[str]`, `owner_of(company_id) -> str | None`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1589,7 +1952,7 @@ from datetime import timedelta
 
 import pytest
 
-from helpers import ADMIN_EMAIL, COMPANIES, NOT_ADMIN_EMAIL, make_world, owner
+from helpers import ADMIN_EMAIL, COMPANIES, NOT_ADMIN_EMAIL, TEMPLATE_METRICS, make_world, owner
 from premday_bot import immap
 from premday_bot.polls import COLLECTING, COMPLETE, CREATED, PollError
 
@@ -1647,7 +2010,7 @@ def test_submit_validation(tmp_path) -> None:
     world = make_world(tmp_path, companies=(*COMPANIES, "dyna"))
     poll = world.collecting_poll(participants=list(COMPANIES))
     good = world.line(poll, "acme")
-    with pytest.raises(PollError, match="not the registered owner"):
+    with pytest.raises(PollError, match="not the user attributed"):
         world.service.submit(poll.id, user_id=owner("bolt"), line=good)
     with pytest.raises(PollError, match="not part of this poll"):
         world.service.submit(poll.id, user_id=owner("dyna"), line=good.replace(".acme.", ".dyna."))
@@ -1667,7 +2030,7 @@ def test_submit_validation(tmp_path) -> None:
         )
     # Sealed to a different admin: the bot can tell without reading it.
     stranger = {"public_key": immap.public_key(1234567)}
-    foreign = immap.seal(b"\x00" * 8 * len(immap.METRICS), [stranger])
+    foreign = immap.seal(b"\x00" * 8 * len(TEMPLATE_METRICS), [stranger])
     encoded = base64.urlsafe_b64encode(json.dumps(foreign).encode()).decode().rstrip("=")
     with pytest.raises(PollError, match="admin keys"):
         world.service.submit(
@@ -1744,14 +2107,14 @@ In `src/premday_bot/polls.py`, insert this block immediately **before** the line
                 raise PollError(f"`{company_id}` is not part of this poll.")
             immap.check_envelope(
                 envelope,
-                len(immap.METRICS),
+                len(poll.metrics),
                 {immap.fingerprint(key) for _, key in poll.admins},
             )
         except ValueError as error:
             raise PollError(str(error)) from error
         company = self._store.get_company(company_id)
         if company is None or company.owner_user_id != user_id:
-            raise PollError(f"You are not the registered owner of `{company_id}`.")
+            raise PollError(f"You are not the user attributed to `{company_id}`.")
         self._store.put_submission(poll.id, company_id, line, self._clock())
         if not self.missing(poll):
             poll = self._save(replace(poll, status=COMPLETE))
@@ -1778,7 +2141,7 @@ Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existi
 
 ```bash
 git add src/premday_bot/polls.py tests/test_polls_collecting.py
-git commit -m "Add poll start and sealed submission collection" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Collect submissions the bot cannot read" -m "Add start and sealed submission handling with completion detection." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1789,7 +2152,7 @@ git commit -m "Add poll start and sealed submission collection" -m "Co-Authored-
 - Test: `tests/test_polls_admin.py`
 
 **Interfaces:**
-- Consumes: Tasks 1-3 (`immap.check_proof`, `immap.totals_digest`, `immap.MODULUS`, `immap.METRICS`, `PollService.missing`, `unfence`, `EXTENDABLE`, `NONCE_TTL`, `ACTION_*`, statuses, helpers `World.admin_totals`, `World.extend_proof`).
+- Consumes: Tasks 1-3 (`immap.check_proof`, `immap.totals_digest`, `immap.MODULUS`, `Poll.metrics`, `PollService.missing`, `unfence`, `EXTENDABLE`, `NONCE_TTL`, `ACTION_*`, statuses, helpers `World.admin_totals`, `World.extend_proof`).
 - Produces: `PollService.begin_admin_action(poll_id, *, email, action) -> str` (nonce), `submission_lines(poll_id, *, email) -> list[str]` (only for a `complete` poll), `extend(poll_id, *, email, new_day: date, nonce, proof) -> Poll`, `mark_done(poll_id, *, email, nonce, totals: dict[str, int], proof) -> Poll`, `report(poll_id) -> Poll` (refuses anything but `done`), `done_polls(channel_id) -> list[Poll]`, `expire_overdue() -> list[tuple[Poll, list[str]]]`, `due_reminders(period: timedelta) -> list[tuple[Poll, list[str]]]`, internal `_consume_nonce`, `_verify`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1807,6 +2170,7 @@ from helpers import (
     COMPANIES,
     NOT_ADMIN_EMAIL,
     SECOND_ADMIN_EMAIL,
+    TEMPLATE_METRICS,
     make_world,
     owner,
 )
@@ -1940,9 +2304,9 @@ def test_totals_must_match_the_metrics(tmp_path) -> None:
     bad_totals: list[dict[str, Any]] = [
         {},
         {"host_count": 1},
-        {**dict.fromkeys(immap.METRICS, 1), "x": 1},
-        dict.fromkeys(immap.METRICS, -1),
-        dict.fromkeys(immap.METRICS, "1"),
+        {**dict.fromkeys(TEMPLATE_METRICS, 1), "x": 1},
+        dict.fromkeys(TEMPLATE_METRICS, -1),
+        dict.fromkeys(TEMPLATE_METRICS, "1"),
     ]
     for totals in bad_totals:
         nonce = world.service.begin_admin_action(poll.id, email=ADMIN_EMAIL, action=ACTION_DONE)
@@ -2233,7 +2597,7 @@ In `src/premday_bot/polls.py`, insert this block immediately **before** the line
         self._consume_nonce(nonce, poll.id, ACTION_DONE, admin)
         if poll.status != COMPLETE:
             raise PollError("Only a complete poll can be validated.")
-        valid = set(totals) == set(immap.METRICS) and all(
+        valid = set(totals) == set(poll.metrics) and all(
             isinstance(value, int)
             and not isinstance(value, bool)
             and 0 <= value < immap.MODULUS
@@ -2328,7 +2692,7 @@ Expected: the whole suite passes (the 8 original tests plus the new ones). `uv r
 
 ```bash
 git add src/premday_bot/polls.py tests/test_polls_admin.py
-git commit -m "Add admin-proof actions, validation gate, extensions, expiry and reminders" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Keep results hidden until an admin validates them" -m "Add admin-proof actions, validation gate, extensions, expiry and reminders." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2339,8 +2703,8 @@ git commit -m "Add admin-proof actions, validation gate, extensions, expiry and 
 - Test: `tests/test_immap_views.py`
 
 **Interfaces:**
-- Consumes: Task 2/4 (`Poll`, `poll_document`, statuses, `RECOMMENDED_PARTICIPANTS`, `MAX_TITLE_LENGTH`), Task 1 (`immap.METRICS`, `immap.fingerprint`).
-- Produces: callback/action id constants `POLL_CALLBACK_ID, SUBMIT_CALLBACK_ID, EXTEND_CALLBACK_ID, DONE_CALLBACK_ID, START_ACTION_ID, SUBMIT_ACTION_ID, EXTEND_ACTION_ID, VALIDATE_ACTION_ID`, `HELP_TEXT`, `escape(str) -> str`, `poll_modal(*, channel_id, company_ids, default_deadline: date) -> dict`, `submit_modal(*, poll_id, title)`, `extend_modal(*, poll_id, nonce, current_deadline: date)`, `validate_modal(*, poll_id, nonce)`, `poll_card(poll, *, submitted, missing) -> tuple[str, list[dict]]`, `poll_json_message(poll) -> str`, `chunk_lines(lines, limit=3500) -> list[str]`, `report_text(poll) -> str` (requires `poll.totals`), `done_list_text(polls) -> str`.
+- Consumes: Task 2/4 (`Poll`, `poll_document`, statuses, `RECOMMENDED_PARTICIPANTS`, `MAX_TITLE_LENGTH`), Task 1 (`immap.POLL_TEMPLATES`, `immap.fingerprint`).
+- Produces: callback/action id constants `POLL_CALLBACK_ID, SUBMIT_CALLBACK_ID, EXTEND_CALLBACK_ID, DONE_CALLBACK_ID, START_ACTION_ID, SUBMIT_ACTION_ID, EXTEND_ACTION_ID, VALIDATE_ACTION_ID`, `HELP_TEXT`, `escape(str) -> str`, `poll_modal(*, channel_id, company_ids, default_deadline: date) -> dict` (title, template select, deadline, companies), `poll_template_label(poll) -> str`, `submit_modal(*, poll_id, title)`, `extend_modal(*, poll_id, nonce, current_deadline: date)`, `validate_modal(*, poll_id, nonce)`, `poll_card(poll, *, submitted, missing) -> tuple[str, list[dict]]`, `poll_json_message(poll) -> str`, `chunk_lines(lines, limit=3500) -> list[str]`, `report_text(poll) -> str` (requires `poll.totals`), `done_list_text(polls) -> str`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2353,10 +2717,13 @@ from helpers import ADMIN_EMAIL, COMPANIES, make_world
 from premday_bot import immap
 from premday_bot.immap_views import (
     EXTEND_ACTION_ID,
+    HELP_TEXT,
     START_ACTION_ID,
     SUBMIT_ACTION_ID,
     VALIDATE_ACTION_ID,
+    attribute_modal,
     chunk_lines,
+    companies_text,
     done_list_text,
     extend_modal,
     poll_card,
@@ -2417,7 +2784,10 @@ def test_card_shows_progress_extension_badge_and_small_pool_warning(tmp_path) ->
     nonce = world.service.begin_admin_action(poll.id, email=email, action=ACTION_EXTEND)
     day = (world.clock.now + timedelta(days=30)).date()
     extended = world.service.extend(
-        poll.id, email=email, new_day=day, nonce=nonce,
+        poll.id,
+        email=email,
+        new_day=day,
+        nonce=nonce,
         proof=world.extend_proof(poll, email, day, nonce),
     )
     text, _ = card(world, extended)
@@ -2460,11 +2830,22 @@ def test_modals_carry_what_the_handlers_need() -> None:
     modal = poll_modal(
         channel_id="C1", company_ids=["acme", "bolt"], default_deadline=date(2026, 12, 1)
     )
-    assert [b["block_id"] for b in modal["blocks"]] == ["title", "deadline", "participants"]
-    assert [o["value"] for o in modal["blocks"][2]["element"]["options"]] == ["acme", "bolt"]
-    many = poll_modal(channel_id="C1", company_ids=[f"co-{i:03d}" for i in range(150)],
-                      default_deadline=date(2026, 12, 1))
-    assert len(many["blocks"][2]["element"]["options"]) == 100
+    assert [b["block_id"] for b in modal["blocks"]] == [
+        "title",
+        "template",
+        "deadline",
+        "participants",
+    ]
+    template = modal["blocks"][1]["element"]
+    assert [o["value"] for o in template["options"]] == list(immap.POLL_TEMPLATES)
+    assert template["initial_option"] == template["options"][0]
+    assert [o["value"] for o in modal["blocks"][3]["element"]["options"]] == ["acme", "bolt"]
+    many = poll_modal(
+        channel_id="C1",
+        company_ids=[f"co-{i:03d}" for i in range(150)],
+        default_deadline=date(2026, 12, 1),
+    )
+    assert len(many["blocks"][3]["element"]["options"]) == 100
     assert "pid" in submit_modal(poll_id="pid", title="t")["private_metadata"]
     extend = extend_modal(poll_id="pid", nonce="n0nce", current_deadline=date(2026, 12, 1))
     assert "n0nce" in extend["private_metadata"] and "n0nce" in str(extend["blocks"][0])
@@ -2483,6 +2864,42 @@ def test_report_text_lists_totals_and_done_list(tmp_path) -> None:
     assert "No validated polls" in done_list_text([])
     assert poll_document(done)["poll_id"] == done.id
     assert set(COMPANIES) <= set(text.replace(",", " ").split())
+
+
+def test_card_and_report_follow_the_polls_template(tmp_path) -> None:
+    world = make_world(tmp_path)
+    poll = world.new_poll()
+    text, _ = poll_card(poll, submitted=[], missing=list(COMPANIES))
+    assert "Template: Infrastructure footprint v1 (23 metrics)" in text
+    done = validated(world, world.complete_poll())
+    lines = report_text(done).split("```")[1].strip().splitlines()
+    assert [line.split(":")[0] for line in lines] == list(done.metrics)  # template order
+
+
+def test_companies_text_lists_users_fingerprints_and_the_unattributed(tmp_path) -> None:
+    world = make_world(tmp_path)
+    world.service.add_company(email=ADMIN_EMAIL, company_id="empty")
+    world.service.enroll(user_id="U_WAITING", public_key=immap.public_key(1234567))
+    text = companies_text(
+        world.service.companies(email=ADMIN_EMAIL),
+        world.service.unattributed_users(email=ADMIN_EMAIL),
+    )
+    assert "*Companies (4)*" in text
+    key = immap.public_key(world.company_keys["acme"])
+    assert f"`acme`: <@U_ACME> (key `{immap.fingerprint(key)}`)" in text
+    assert "`empty`: _nobody attributed_" in text
+    assert "*Enrolled, not attributed:* <@U_WAITING>" in text
+    assert "none yet" in companies_text([], [])
+
+
+def test_attribute_modal_and_help_cover_company_management() -> None:
+    modal = attribute_modal(["acme", "bolt"])
+    assert [b["block_id"] for b in modal["blocks"]] == ["company", "user"]
+    assert [o["value"] for o in modal["blocks"][0]["element"]["options"]] == ["acme", "bolt"]
+    assert modal["blocks"][1]["element"]["type"] == "users_select"
+    for command in ("register <public_key>", "companies", "company add", "company remove",
+                    "company attribute", "company unattribute"):
+        assert f"/immap {command}" in HELP_TEXT
 ````
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -2509,6 +2926,7 @@ from premday_bot.polls import (
     INCOMPLETE,
     MAX_TITLE_LENGTH,
     RECOMMENDED_PARTICIPANTS,
+    Company,
     Poll,
     poll_document,
 )
@@ -2517,6 +2935,7 @@ POLL_CALLBACK_ID = "immap_poll"
 SUBMIT_CALLBACK_ID = "immap_submit"
 EXTEND_CALLBACK_ID = "immap_extend"
 DONE_CALLBACK_ID = "immap_done"
+ATTRIBUTE_CALLBACK_ID = "immap_attribute"
 START_ACTION_ID = "immap_start"
 SUBMIT_ACTION_ID = "immap_submit_open"
 EXTEND_ACTION_ID = "immap_extend_open"
@@ -2536,10 +2955,15 @@ STATUS_LABELS = {
 
 HELP_TEXT = (
     "*IMMAP polls*\n"
-    "• `/immap register <company_id> <public_key>` registers your company\n"
-    "• `/immap admin-register <public_key>` registers an admin key (admins only)\n"
+    "• `/immap register <public_key>` enrolls you; an admin then attributes a company to you\n"
     "• `/immap poll` creates a poll\n"
-    "• `/immap report [poll_id]` shows validated results"
+    "• `/immap report [poll_id]` shows validated results\n"
+    "*Admins only*\n"
+    "• `/immap admin-register <public_key>` registers an admin key\n"
+    "• `/immap companies` lists the companies, their users and who is not attributed yet\n"
+    "• `/immap company add <company_id>` and `/immap company remove <company_id>`\n"
+    "• `/immap company attribute` picks the enrolled user who answers for a company\n"
+    "• `/immap company unattribute <company_id>`"
 )
 
 
@@ -2565,8 +2989,71 @@ def _text_input(block_id: str, label: str, *, multiline: bool = False, max_lengt
     }
 
 
+def companies_text(companies: list[Company], unattributed: list[str]) -> str:
+    rows = [
+        f"• `{company.company_id}`: "
+        + (
+            f"<@{company.owner_user_id}> (key `{immap.fingerprint(company.public_key)}`)"
+            if company.owner_user_id and company.public_key
+            else "_nobody attributed_"
+        )
+        for company in companies
+    ]
+    lines = [f"*Companies ({len(companies)})*", *(rows or ["_none yet: `/immap company add`_"])]
+    if unattributed:
+        mentions = " ".join(f"<@{user}>" for user in unattributed)
+        lines.append(f"*Enrolled, not attributed:* {mentions}")
+    return "\n".join(lines)
+
+
+def attribute_modal(company_ids: list[str]) -> dict:
+    options = [{"text": _plain(company), "value": company} for company in company_ids]
+    return {
+        "type": "modal",
+        "callback_id": ATTRIBUTE_CALLBACK_ID,
+        "title": _plain("Attribute a company"),
+        "submit": _plain("Attribute"),
+        "close": _plain("Cancel"),
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "company",
+                "label": _plain("Company"),
+                "element": {
+                    "type": "static_select",
+                    "action_id": "value",
+                    "placeholder": _plain("Choose a company"),
+                    "options": options[:MAX_SELECT_OPTIONS],
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "user",
+                "label": _plain("Enrolled user who answers for it"),
+                "element": {"type": "users_select", "action_id": "value"},
+            },
+        ],
+    }
+
+
+def notice_modal(title: str, text: str) -> dict:
+    return {
+        "type": "modal",
+        "title": _plain(title),
+        "close": _plain("Close"),
+        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}],
+    }
+
+
 def poll_modal(*, channel_id: str, company_ids: list[str], default_deadline: date) -> dict:
     options = [{"text": _plain(company), "value": company} for company in company_ids]
+    template_options = [
+        {
+            "text": _plain(f"{template.title} ({len(template.metrics)} metrics)"),
+            "value": template.id,
+        }
+        for template in immap.POLL_TEMPLATES.values()
+    ]
     return {
         "type": "modal",
         "callback_id": POLL_CALLBACK_ID,
@@ -2584,6 +3071,17 @@ def poll_modal(*, channel_id: str, company_ids: list[str], default_deadline: dat
                     "action_id": "value",
                     "initial_value": "Infrastructure metrics",
                     "max_length": MAX_TITLE_LENGTH,
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "template",
+                "label": _plain("Template"),
+                "element": {
+                    "type": "static_select",
+                    "action_id": "value",
+                    "initial_option": template_options[0],
+                    "options": template_options,
                 },
             },
             {
@@ -2693,6 +3191,12 @@ def validate_modal(*, poll_id: str, nonce: str) -> dict:
     }
 
 
+def poll_template_label(poll: Poll) -> str:
+    template = immap.POLL_TEMPLATES.get(poll.template)
+    title = template.title if template else poll.template
+    return f"{escape(title)} v{poll.schema_version} ({len(poll.metrics)} metrics)"
+
+
 def poll_card(poll: Poll, *, submitted: list[str], missing: list[str]) -> tuple[str, list[dict]]:
     label = STATUS_LABELS[poll.status]
     lines = [f"*{escape(poll.title)}* · `{poll.id}` · {label}"]
@@ -2703,6 +3207,7 @@ def poll_card(poll: Poll, *, submitted: list[str], missing: list[str]) -> tuple[
             f"(original: {poll.original_deadline.date().isoformat()})"
         )
     lines.append(deadline)
+    lines.append(f"Template: {poll_template_label(poll)}")
     total = len(poll.participants)
     if poll.status in (COLLECTING, COMPLETE, INCOMPLETE):
         lines.append(f"Submitted {len(submitted)}/{total}: {', '.join(submitted) or 'nobody yet'}")
@@ -2786,7 +3291,7 @@ def chunk_lines(lines: list[str], limit: int = SLACK_CHUNK_LIMIT) -> list[str]:
 def report_text(poll: Poll) -> str:
     assert poll.totals is not None
     rows = [
-        f"{name}: {poll.totals[name]:,} {unit}" for name, unit in sorted(immap.METRICS.items())
+        f"{name}: {poll.totals[name]:,} {unit}" for name, unit in poll.metrics.items()
     ]
     validator = escape(poll.validated_by or "?")
     header = f"*{escape(poll.title)}* · `{poll.id}` · validated by {validator}"
@@ -2814,7 +3319,7 @@ Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existi
 
 ```bash
 git add src/premday_bot/immap_views.py tests/test_immap_views.py
-git commit -m "Add IMMAP Slack views: modals, poll card, poll.json message, reports" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Let people drive polls from Slack" -m "Add modals, poll card, poll.json message, company list and reports." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2827,7 +3332,7 @@ git commit -m "Add IMMAP Slack views: modals, poll card, poll.json message, repo
 
 **Interfaces:**
 - Consumes: Tasks 2-5 (`PollService` methods, `PollError`, `unfence`, views and id constants), `Settings`.
-- Produces: `Settings.immap_reminder_hours: int = 24` and `Settings.immap_admin_emails: frozenset[str] = frozenset()` (lowercased); in `immap_slack`: `parse_command(text) -> tuple[str, list[str]]`, `poll_error_block(message) -> str`, `extend_error_block(message) -> str`, `email_of(client, user_id) -> str | None`, `refresh_card(client, polls, poll_id)`, `post_in_thread(client, polls, poll_id, text)`, `sweep_once(client, polls, reminder_period: timedelta)`, `run_sweeper(client, polls, reminder_period)`, `register_immap(app, polls, settings)` (registers `/immap`, four views and four button actions: 9 listeners).
+- Produces: `Settings.immap_reminder_hours: int = 24` and `Settings.immap_admin_emails: frozenset[str] = frozenset()` (lowercased); in `immap_slack`: `parse_command(text) -> tuple[str, list[str]]`, `poll_error_block(message) -> str`, `extend_error_block(message) -> str`, `email_of(client, user_id) -> str | None`, `refresh_card(client, polls, poll_id)`, `post_in_thread(client, polls, poll_id, text)`, `sweep_once(client, polls, reminder_period: timedelta)`, `run_sweeper(client, polls, reminder_period)`, `register_immap(app, polls, settings)` (registers `/immap`, five views and four button actions: 10 listeners).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2874,12 +3379,13 @@ Create `tests/test_immap_slack.py`:
 ````python
 import asyncio
 from datetime import timedelta
-from typing import cast
+from typing import Any, cast
 
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 
 from helpers import ADMIN_EMAIL, make_world, owner
+from premday_bot import immap
 from premday_bot.config import Settings
 from premday_bot.immap_slack import (
     email_of,
@@ -2890,6 +3396,7 @@ from premday_bot.immap_slack import (
     register_immap,
     sweep_once,
 )
+from premday_bot.immap_views import ATTRIBUTE_CALLBACK_ID
 from premday_bot.polls import ACTION_EXTEND, COLLECTING, INCOMPLETE
 
 
@@ -2933,6 +3440,7 @@ def test_parse_command() -> None:
 
 def test_error_messages_are_routed_to_the_right_input() -> None:
     assert poll_error_block("Add a title.") == "title"
+    assert poll_error_block("Choose one of the poll templates.") == "template"
     assert poll_error_block("The deadline must be in the future.") == "deadline"
     assert poll_error_block("A poll needs at least 3 companies.") == "participants"
     assert extend_error_block("The new deadline must be later than the current one.") == "date"
@@ -3019,8 +3527,115 @@ def test_handlers_register_on_a_bolt_app(tmp_path) -> None:
         smtp_password=None, smtp_use_tls=True, smtp_use_ssl=False, email_from=None,
     )
     register_immap(app, world.service, settings)
-    # one command, four views and four buttons
-    assert len(app._async_listeners) == 9
+    # one command, five views and four buttons
+    assert len(app._async_listeners) == 10
+
+
+class CapturingApp:
+    """Collects the handlers `register_immap` declares so tests can call them directly."""
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, object] = {}
+
+    def command(self, name):
+        return self._remember(name)
+
+    def view(self, callback_id):
+        return self._remember(callback_id)
+
+    def action(self, action_id):
+        return self._remember(action_id)
+
+    def _remember(self, key):
+        def decorator(function):
+            self.handlers[key] = function
+            return function
+
+        return decorator
+
+
+class Reply:
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+        self.acks: list[dict] = []
+
+    async def respond(self, text: str, response_type: str) -> None:
+        self.texts.append(text)
+
+    async def ack(self, **kwargs) -> None:
+        self.acks.append(kwargs)
+
+
+def command_driver(tmp_path):
+    world = make_world(tmp_path)
+    app = CapturingApp()
+    settings = Settings(
+        slack_bot_token="xoxb-test", slack_app_token="xapp-test", slack_team_id=None,
+        timezone="Europe/Paris", default_hour=18, default_duration_minutes=90,
+        db_path=tmp_path / "x.sqlite3", smtp_host=None, smtp_port=587, smtp_username=None,
+        smtp_password=None, smtp_use_tls=True, smtp_use_ssl=False, email_from=None,
+    )
+    register_immap(cast(AsyncApp, app), world.service, settings)
+    client = FakeClient()
+    opened: list[dict] = []
+
+    async def views_open(**kwargs) -> None:
+        opened.append(kwargs)
+
+    client.views_open = views_open  # type: ignore[attr-defined]
+
+    def say(user_id: str, text: str, email: str | None = ADMIN_EMAIL) -> Reply:
+        client.profile_email = email
+        reply = Reply()
+        body = {"user_id": user_id, "channel_id": "C1", "trigger_id": "T1"}
+        handler = cast(Any, app.handlers["/immap"])
+        run(handler(reply.ack, body, {"text": text}, reply.respond, web(client)))
+        return reply
+
+    return world, app, client, opened, say
+
+
+def test_users_enroll_and_admins_manage_companies_through_the_command(tmp_path) -> None:
+    world, _, _, opened, say = command_driver(tmp_path)
+    key = immap.public_key(immap.generate_private_key())
+    assert "Enrolled" in say("U_NEW", f"register {key}", email=None).texts[0]
+    assert "Only admins" in say("U_NEW", "companies", email="x@example.com").texts[0]
+    assert "<@U_NEW>" in say("U_ADMIN", "companies").texts[0]  # listed as not attributed
+    assert "Added `newco`" in say("U_ADMIN", "company add newco").texts[0]
+    assert "already exists" in say("U_ADMIN", "company add newco").texts[0]
+    assert "Only admins" in say("U_NEW", "company add other", email="x@example.com").texts[0]
+    say("U_ADMIN", "company attribute")
+    modal = opened[0]["view"]
+    assert [o["value"] for o in modal["blocks"][0]["element"]["options"]][-1] == "newco"
+    assert "Removed `newco`" in say("U_ADMIN", "company remove newco").texts[0]
+    assert "no user attributed" in say("U_ADMIN", "company unattribute acme").texts[0]
+    assert world.service.owner_of("acme") is None
+    assert "Only admins" in say("U_ADMIN", "company attribute", email=None).texts[0]
+    assert "IMMAP polls" in say("U_NEW", "register acme abc").texts[0]  # the old 2-arg form
+
+
+def test_the_attribute_modal_attributes_and_reports_errors(tmp_path) -> None:
+    world, app, client, _, _ = command_driver(tmp_path)
+    world.service.add_company(email=ADMIN_EMAIL, company_id="newco")
+    world.service.enroll(user_id="U_NEW", public_key=immap.public_key(1234567))
+    handler = cast(Any, app.handlers[ATTRIBUTE_CALLBACK_ID])
+
+    def submit(company: str, user: str, email: str | None = ADMIN_EMAIL) -> Reply:
+        client.profile_email = email
+        view = {"state": {"values": {
+            "company": {"value": {"selected_option": {"value": company}}},
+            "user": {"value": {"selected_user": user}},
+        }}}
+        reply = Reply()
+        run(handler(reply.ack, {"user": {"id": "U_ADMIN"}}, view, web(client)))
+        return reply
+
+    assert "not enrolled" in submit("newco", "U_STRANGER").acks[0]["errors"]["user"]
+    refused = submit("newco", "U_NEW", email="x@example.com")
+    assert "Only admins" in refused.acks[0]["errors"]["user"]
+    done = submit("newco", "U_NEW").acks[0]
+    assert done["response_action"] == "update" and "<@U_NEW>" in str(done["view"])
+    assert world.service.owner_of("newco") == "U_NEW"
 ````
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -3082,9 +3697,9 @@ from zoneinfo import ZoneInfo
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 
-from premday_bot import immap
 from premday_bot.config import Settings
 from premday_bot.immap_views import (
+    ATTRIBUTE_CALLBACK_ID,
     DONE_CALLBACK_ID,
     EXTEND_ACTION_ID,
     EXTEND_CALLBACK_ID,
@@ -3094,9 +3709,12 @@ from premday_bot.immap_views import (
     SUBMIT_ACTION_ID,
     SUBMIT_CALLBACK_ID,
     VALIDATE_ACTION_ID,
+    attribute_modal,
     chunk_lines,
+    companies_text,
     done_list_text,
     extend_modal,
+    notice_modal,
     poll_card,
     poll_json_message,
     poll_modal,
@@ -3128,6 +3746,8 @@ def poll_error_block(message: str) -> str:
     lowered = message.lower()
     if "title" in lowered:
         return "title"
+    if "template" in lowered:
+        return "template"
     if "deadline" in lowered:
         return "deadline"
     return "participants"
@@ -3215,14 +3835,40 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
         user_id = body["user_id"]
         subcommand, args = parse_command(command.get("text", ""))
         try:
-            if subcommand == "register" and len(args) == 2:
-                company = polls.register_company(
-                    company_id=args[0], owner_user_id=user_id, public_key=args[1]
-                )
+            if subcommand == "register" and len(args) == 1:
+                fingerprint = polls.enroll(user_id=user_id, public_key=args[0])
                 text = (
-                    f"Registered `{company.company_id}`. Key fingerprint: "
-                    f"`{immap.fingerprint(company.public_key)}`"
+                    f"Enrolled. Key fingerprint: `{fingerprint}`. An admin will attribute "
+                    "your company to you."
                 )
+            elif subcommand == "companies" and not args:
+                email = await email_of(client, user_id)
+                text = companies_text(
+                    polls.companies(email=email), polls.unattributed_users(email=email)
+                )
+            elif subcommand == "company" and args and args[0].lower() == "attribute":
+                email = await email_of(client, user_id)
+                await client.views_open(
+                    trigger_id=body["trigger_id"],
+                    view=attribute_modal([c.company_id for c in polls.companies(email=email)]),
+                )
+                return
+            elif subcommand == "company" and len(args) == 2:
+                email = await email_of(client, user_id)
+                action, company_id = args[0].lower(), args[1]
+                if action == "add":
+                    polls.add_company(email=email, company_id=company_id)
+                    text = (
+                        f"Added `{company_id}`. Attribute a user with `/immap company attribute`."
+                    )
+                elif action == "remove":
+                    polls.remove_company(email=email, company_id=company_id)
+                    text = f"Removed `{company_id}`."
+                elif action == "unattribute":
+                    polls.unattribute_company(email=email, company_id=company_id)
+                    text = f"`{company_id}` has no user attributed any more."
+                else:
+                    text = HELP_TEXT
             elif subcommand == "admin-register" and len(args) == 1:
                 fingerprint = polls.register_admin_key(
                     email=await email_of(client, user_id), public_key=args[0]
@@ -3250,6 +3896,25 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
             text = str(error)
         await respond(text=text, response_type="ephemeral")
 
+    @app.view(ATTRIBUTE_CALLBACK_ID)
+    async def handle_attribute(ack, body, view, client: AsyncWebClient) -> None:
+        values = view["state"]["values"]
+        company_id = values["company"]["value"]["selected_option"]["value"]
+        user_id = values["user"]["value"]["selected_user"]
+        try:
+            polls.attribute_company(
+                email=await email_of(client, body["user"]["id"]),
+                company_id=company_id,
+                user_id=user_id,
+            )
+        except PollError as error:
+            await ack(response_action="errors", errors={"user": str(error)})
+            return
+        await ack(
+            response_action="update",
+            view=notice_modal("Attributed", f"<@{user_id}> now answers for `{company_id}`."),
+        )
+
     @app.view(POLL_CALLBACK_ID)
     async def handle_poll_submission(ack, body, view, client: AsyncWebClient) -> None:
         values = view["state"]["values"]
@@ -3259,6 +3924,7 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
                 channel_id=metadata["channel_id"],
                 creator_user_id=body["user"]["id"],
                 title=values["title"]["value"]["value"] or "",
+                template=values["template"]["value"]["selected_option"]["value"],
                 deadline_day=date.fromisoformat(values["deadline"]["value"]["selected_date"]),
                 participants=[
                     option["value"]
@@ -3434,7 +4100,7 @@ Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existi
 
 ```bash
 git add src/premday_bot/config.py src/premday_bot/immap_slack.py tests/test_config.py tests/test_immap_slack.py
-git commit -m "Add IMMAP settings, /immap handlers and the deadline/reminder sweeper" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Make polls usable through one slash command" -m "Add settings, /immap handlers and the deadline/reminder sweeper." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3475,14 +4141,14 @@ def test_build_app_registers_meeting_and_immap_handlers(tmp_path) -> None:
         email_from=None,
     )
     app = build_app(settings)
-    # /meeting + schedule view + two meeting buttons, then /immap + 4 views + 4 buttons
-    assert len(app._async_listeners) == 4 + 9
+    # /meeting + schedule view + two meeting buttons, then /immap + 5 views + 4 buttons
+    assert len(app._async_listeners) == 4 + 10
 ````
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/test_app_wiring.py`
-Expected: FAIL, `assert 4 == 13` (only the 4 meeting listeners exist).
+Expected: FAIL, `assert 4 == 14` (only the 4 meeting listeners exist).
 
 - [ ] **Step 3: Write the implementation**
 
@@ -3559,7 +4225,7 @@ Edit `slack/app-manifest.yaml`: after the `/meeting` command entry (after its `s
 ````yaml
     - command: /immap
       description: Aggregate infrastructure metrics without revealing individual values
-      usage_hint: "register | admin-register | poll | report"
+      usage_hint: "register | companies | company | admin-register | poll | report"
       should_escape: false
 ````
 
@@ -3572,7 +4238,7 @@ Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existi
 
 ```bash
 git add src/premday_bot/app.py slack/app-manifest.yaml tests/test_app_wiring.py
-git commit -m "Wire IMMAP polls into the bot and declare /immap in the manifest" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Ship the feature in the running bot" -m "Wire handlers and sweeper into app.py and declare /immap in the manifest." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3617,7 +4283,7 @@ python immap.py keygen                      # companies: writes immap.key, print
 python immap.py keygen --key admin.key      # admins: writes admin.key
 ```
 
-**Companies:** `/immap register <company_id> <public_key>` once. When a poll is started, save the
+**Companies:** enroll once with `/immap register <public_key>`; an admin then attributes your company to you. When a poll is started, save the
 `poll.json` the bot posts in the thread, write `values.json` (every metric, integers, `0` for none),
 then run `python immap.py submit poll.json values.json` and paste the printed line into **Submit**.
 Compare the key fingerprints printed by the tool with the ones you registered.
@@ -3628,6 +4294,19 @@ Compare the key fingerprints printed by the tool with the ones you registered.
   `python immap.py aggregate poll.json lines.txt --nonce N` (save the sealed lines the bot sends you
   as `lines.txt`). Paste the output back into the modal.
 - Totals become visible with `/immap report <poll_id>` only after a poll is validated (`done`).
+
+**Admins also manage the companies:** `/immap companies` lists them with their user and key fingerprint
+and who has enrolled without a company; `/immap company add <id>`, `remove <id>`, `unattribute <id>` and
+`/immap company attribute` (a modal: company + enrolled user) maintain the list. A company's key is the
+key of the user attributed to it. Companies that are in a poll that is not `done` are frozen, because their
+key is snapshotted in it.
+
+**Poll templates:** a poll is created from a template, a fixed list of metrics with units (defined in
+`immap.py`, `POLL_TEMPLATES`). The first one, `infra-footprint`, covers rooms, racks and rack units, power,
+CDUs, hosts (also OpenBMC and 21"/OCP), CPU cores, DIMM, GPUs and VRAM, accelerators, disks by technology
+(SATA HDD, SATA SSD, NVMe SSD), NICs, optics, cabling and PSU levels. A poll keeps the template version and
+metrics it was created with, so changing a template never affects polls that already exist. To add one,
+add a `PollTemplate` to `POLL_TEMPLATES`.
 
 Poll statuses: `created` → `collecting` → `complete` → `done`; `incomplete` when the deadline passes
 with answers missing (an admin can extend it, which resumes `collecting` and is badged *Extended*).
@@ -3660,7 +4339,7 @@ Expected: a `public key:` and `fingerprint:` line, and `immap.key` with mode `-r
 
 ```bash
 git add README.md .env.example
-git commit -m "Document IMMAP polls" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Tell users and admins how to run a poll" -m "Document IMMAP in the README and .env.example." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 - [ ] **Step 4: Report**
