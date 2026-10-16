@@ -23,7 +23,7 @@
 - Statuses are exactly `created`, `collecting`, `complete`, `incomplete`, `done`.
 - Admin = Slack profile email in `IMMAP_ADMIN_EMAILS` (comma-separated, case-insensitive); any one admin suffices. Test fixtures: Aurélien Rougemont (Criteo) `a.rougemont@criteo.com`, a second admin, a non-admin.
 - Totals must not exist in the bot (database or memory) before a poll is `done`.
-- Baseline: `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors. Run all commands from the repository root. The suite must stay green after every task.
+- Baseline: `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors. Run all commands from the repository root. The suite must stay green after every task.
 
 ## Review Focus
 
@@ -845,7 +845,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest tests/test_immap.py && uv run ruff check . && uv run pyright`
-Expected: 21 tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: 21 tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -1973,7 +1973,7 @@ def _normalized_key(public_key: str) -> str:
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest tests/test_immap.py tests/test_polls_setup.py && uv run ruff check . && uv run pyright`
-Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: all tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -2183,7 +2183,7 @@ In `src/premday_bot/polls.py`, insert this block immediately **before** the line
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest tests/test_immap.py tests/test_polls_setup.py tests/test_polls_collecting.py && uv run ruff check . && uv run pyright`
-Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: all tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -2734,7 +2734,7 @@ Then insert this block at the end of `class PollService`, right after the `_end_
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest && uv run ruff check . && uv run pyright`
-Expected: the whole suite passes (the 8 original tests plus the new ones). `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: the whole suite passes (the 8 original tests plus the new ones). `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -3401,7 +3401,7 @@ def done_list_text(polls: list[Poll]) -> str:
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest && uv run ruff check . && uv run pyright`
-Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: all tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -4274,7 +4274,7 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest && uv run ruff check . && uv run pyright`
-Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: all tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -4412,7 +4412,7 @@ Edit `slack/app-manifest.yaml`: after the `/meeting` command entry (after its `s
 - [ ] **Step 4: Run tests, lint and types**
 
 Run: `uv run pytest && uv run ruff check . && uv run pyright`
-Expected: all tests pass. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: all tests pass. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 
 - [ ] **Step 5: Commit**
 
@@ -4507,7 +4507,7 @@ IMMAP_REMINDER_HOURS=24
 - [ ] **Step 2: Run the full verification**
 
 Run: `uv run pytest && uv run ruff check . && uv run pyright`
-Expected: the whole suite passes. `uv run ruff check .` reports exactly three pre-existing `E501` errors in `src/premday_bot/templates.py` (lines 75, 78, 84). Leave them alone; there must be no other errors.
+Expected: the whole suite passes. `uv run ruff check .` reports exactly four pre-existing errors, all in `src/premday_bot/templates.py` (an `I001` import order and `E501` on lines 75, 78, 84). Leave them alone; there must be no other errors.
 Also run a standalone smoke test of the participant tool, outside the package:
 
 ```bash
