@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 from email.utils import parseaddr
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -14,9 +15,11 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from premday_bot.config import Settings
 from premday_bot.dates import combine_local_date_time, default_meeting_start
+from premday_bot.immap_slack import register_immap, run_sweeper
 from premday_bot.mailer import InvitationMailer
 from premday_bot.models import Meeting
 from premday_bot.organizer import MeetingOrganizer, new_meeting_id
+from premday_bot.polls import PollService, PollStore
 from premday_bot.rsvp_mail import RSVPTransferServer, parse_calendar_replies
 from premday_bot.slack_services import SlackCanvasClient, SlackDirectory, SlackPublisher
 from premday_bot.slack_views import (
@@ -34,15 +37,25 @@ LOGGER = logging.getLogger(__name__)
 class Runtime:
     settings: Settings
     store: MeetingStore
+    polls: PollService
     canvas_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+def _build_runtime(settings: Settings) -> Runtime:
+    return Runtime(
+        settings=settings,
+        store=MeetingStore(settings.db_path),
+        polls=PollService(
+            PollStore(settings.db_path),
+            timezone=settings.timezone,
+            admin_emails=settings.immap_admin_emails,
+        ),
+    )
 
 
 def build_app(settings: Settings | None = None) -> AsyncApp:
     resolved_settings = settings or Settings.from_env()
-    runtime = Runtime(
-        settings=resolved_settings,
-        store=MeetingStore(resolved_settings.db_path),
-    )
+    runtime = _build_runtime(resolved_settings)
     app = AsyncApp(token=runtime.settings.slack_bot_token)
 
     @app.command("/meeting")
@@ -174,6 +187,7 @@ def build_app(settings: Settings | None = None) -> AsyncApp:
                 text="I could not load the RSVP list. Check the bot logs for details.",
             )
 
+    register_immap(app, runtime.polls, runtime.settings)
     return app
 
 
@@ -190,7 +204,7 @@ def run() -> None:
                 "PREMDAY_EMAIL_FROM must use RSVP_EMAIL_ADDRESS so calendar replies reach the bot"
             )
     app = build_app(settings)
-    runtime = Runtime(settings=settings, store=MeetingStore(settings.db_path))
+    runtime = _build_runtime(settings)
 
     async def start_socket_mode() -> None:
         handler = AsyncSocketModeHandler(app, settings.slack_app_token)
@@ -217,9 +231,17 @@ def run() -> None:
                 on_message=handle_rsvp_message,
             )
             await rsvp_server.start()
+        sweeper = asyncio.create_task(
+            run_sweeper(
+                app.client,
+                runtime.polls,
+                timedelta(hours=settings.immap_reminder_hours),
+            )
+        )
         try:
             await handler.start_async()
         finally:
+            sweeper.cancel()
             if rsvp_server:
                 await rsvp_server.close()
 

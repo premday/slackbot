@@ -18,6 +18,8 @@ A small Slack app for organizing Premday usergroup meetings.
 - A `View RSVPs` button privately shows responder names in independently expandable
   Going, Absent, and Maybe sections. Expanded names appear in two columns, using Slack
   user mentions for members and email addresses for invitees without a Slack account.
+- `/immap` computes aggregate infrastructure metrics across companies without anyone
+  (including the bot) seeing individual values; see [IMMAP polls](#immap-polls).
 
 ## Setup
 
@@ -124,6 +126,53 @@ In Slack:
 | `PREMDAY_EMAIL_FROM` | yes | Sender header for invitations. |
 | `RSVP_EMAIL_ADDRESS` | no | Address in calendar invites and only recipient accepted by the RSVP listener. |
 | `RSVP_SMTP_HOST_PORT` | no | Host loopback port published by Compose; defaults to `2525`. |
+| `IMMAP_ADMIN_EMAILS` | no | Comma-separated Slack profile emails of IMMAP admins. Empty means nobody is admin. |
+| `IMMAP_REMINDER_HOURS` | no | Hours between reminders to companies that have not submitted; defaults to `24`. |
+
+## IMMAP polls
+
+IMMAP lets companies add up infrastructure metrics (CPU cores, DIMM TiB, GPUs, ...) so that only
+totals are ever revealed. Design and trust model: `docs/superpowers/specs/2026-10-16-immap-slack-design.md`.
+The bot never sees a value: each company masks its numbers with pairwise secrets and seals the result
+to the admins' keys; the bot only stores ciphertext.
+
+Participants and admins run `src/premday_bot/immap.py` (standard library only, no installation):
+
+```bash
+python immap.py keygen                      # companies: writes immap.key, prints public key
+python immap.py keygen --key admin.key      # admins: writes admin.key
+```
+
+**Companies:** enroll once with `/immap register <public_key>`; an admin then adds you to your company (several people can belong to one company; the first member holds the company key, so share the key file with colleagues). When a colleague submits for your company, the other members are mentioned in the poll thread. When a poll is started, save the
+`poll.json` the bot posts in the thread, write `values.json` (every metric, integers, `0` for none),
+then run `python immap.py submit poll.json values.json` and paste the printed line into **Submit**.
+Compare the key fingerprints printed by the tool with the ones you registered.
+
+**Admins** (emails in `IMMAP_ADMIN_EMAILS`): `/immap admin-register <public_key>` once (at most 5 admins).
+- **Extend deadline** and **Validate** show a one-time nonce and the exact command to run:
+  `python immap.py proof poll.json --action extend --argument YYYY-MM-DD --nonce N` or
+  `python immap.py aggregate poll.json lines.txt --nonce N` (save the sealed lines the bot sends you
+  as `lines.txt`). Paste the output back into the modal.
+- Totals become visible with `/immap report <poll_id>` only after a poll is validated (`done`).
+
+**Admins also manage the companies:** `/immap companies` lists them with their members and key fingerprint
+and who has enrolled without a company; `/immap company add <id>`, and `remove <id>`
+maintain the list, `/immap company attribute` (a modal: company + enrolled user) adds a member and
+`/immap company unattribute` (a modal: user) removes one. A company's key is the key of its first member.
+Removing a company, its key holder, or rotating the holder's key is refused while the company is in a
+`created` or `collecting` poll that has not reached its deadline, because the key is snapshotted there;
+adding or removing other members is always possible.
+
+**Poll templates:** a poll is created from a template, a fixed list of metrics with units (defined in
+`immap.py`, `POLL_TEMPLATES`). The first one, `infra-footprint`, covers rooms, racks and rack units, power,
+CDUs, hosts (also OpenBMC and 21"/OCP), CPU cores, DIMM, GPUs and VRAM, accelerators, disks by technology
+(SATA HDD, SATA SSD, NVMe SSD), NICs, optics, cabling and PSU levels. A poll keeps the template version and
+metrics it was created with, so changing a template never affects polls that already exist. To add one,
+add a `PollTemplate` to `POLL_TEMPLATES`.
+
+Poll statuses: `created` → `collecting` → `complete` → `done`; `incomplete` when the deadline passes
+with answers missing (an admin can extend it, which resumes `collecting` and is badged *Extended*).
+Missing companies are reminded every `IMMAP_REMINDER_HOURS`.
 
 ## Development
 

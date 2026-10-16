@@ -10,6 +10,10 @@ features:
       description: Organize the next Premday meeting
       usage_hint: "open the meeting scheduler"
       should_escape: false
+    - command: /immap
+      description: Aggregate infrastructure metrics without revealing individual values
+      usage_hint: "register | companies | company | admin-register | poll | report"
+      should_escape: false
 oauth_config:
   scopes:
     bot:
