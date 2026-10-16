@@ -21,6 +21,11 @@ def _int_env(name: str, default: int) -> int:
     return int(raw)
 
 
+def _email_set_env(name: str) -> frozenset[str]:
+    raw = os.getenv(name, "")
+    return frozenset(item.strip().lower() for item in raw.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     slack_bot_token: str
@@ -39,10 +44,15 @@ class Settings:
     email_from: str | None
     rsvp_email_address: str | None = None
     rsvp_smtp_port: int = 8025
+    immap_reminder_hours: int = 24
+    immap_admin_emails: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls) -> Settings:
         load_dotenv()
+        reminder_hours = _int_env("IMMAP_REMINDER_HOURS", 24)
+        if reminder_hours < 1:
+            raise RuntimeError("IMMAP_REMINDER_HOURS must be at least 1")
         return cls(
             slack_bot_token=_required_env("SLACK_BOT_TOKEN"),
             slack_app_token=_required_env("SLACK_APP_TOKEN"),
@@ -60,6 +70,8 @@ class Settings:
             email_from=os.getenv("PREMDAY_EMAIL_FROM"),
             rsvp_email_address=os.getenv("RSVP_EMAIL_ADDRESS"),
             rsvp_smtp_port=_int_env("RSVP_SMTP_PORT", 8025),
+            immap_reminder_hours=reminder_hours,
+            immap_admin_emails=_email_set_env("IMMAP_ADMIN_EMAILS"),
         )
 
     @property
