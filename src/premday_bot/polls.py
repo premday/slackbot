@@ -438,6 +438,13 @@ class PollService:
         for other_user, other_key in self._store.enrollments().items():
             if other_key == key and other_user != user_id:
                 raise PollError("This public key is already enrolled by another Slack user.")
+        if self._store.enrollments().get(user_id, key) != key:
+            holder_of = next(
+                (c.company_id for c in self._store.list_companies() if c.members[:1] == (user_id,)),
+                None,
+            )
+            if holder_of:  # the company key would change under its open polls
+                self._require_no_open_poll(holder_of)
         self._store.upsert_enrollment(user_id, key)
         return immap.fingerprint(key)
 

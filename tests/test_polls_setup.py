@@ -182,6 +182,7 @@ def test_create_poll_snapshots_keys_and_starts_in_created(tmp_path) -> None:
     assert [email for email, _ in poll.admins] == sorted([ADMIN_EMAIL, SECOND_ADMIN_EMAIL])
     assert poll.deadline.tzinfo is not None and poll.deadline == poll.original_deadline
     # Rotating a company key later does not change an existing poll.
+    world.clock.advance(timedelta(days=30))  # past the deadline, the freeze no longer applies
     world.service.enroll(
         user_id=owner("acme"), public_key=immap.public_key(immap.generate_private_key())
     )
@@ -352,3 +353,19 @@ def test_the_key_freeze_only_lasts_while_a_poll_can_still_receive_submissions(tm
     service.unattribute_user(email=ADMIN_EMAIL, user_id=owner("bolt"))
     service.remove_company(email=ADMIN_EMAIL, company_id="corp")
     assert stale.id
+
+
+def test_a_key_holder_cannot_rotate_their_key_while_their_company_can_still_submit(
+    tmp_path,
+) -> None:
+    world = make_world(tmp_path)
+    poll = world.new_poll()
+    with pytest.raises(PollError, match=f"open poll `{poll.id}`"):
+        world.service.enroll(
+            user_id=owner("acme"), public_key=immap.public_key(immap.generate_private_key())
+        )
+    # Same key again is not a rotation; other users and colleagues are unaffected.
+    same_key = immap.public_key(world.company_keys["acme"])
+    world.service.enroll(user_id=owner("acme"), public_key=same_key)
+    free_key = immap.public_key(immap.generate_private_key())
+    world.service.enroll(user_id="U_FREE", public_key=free_key)
