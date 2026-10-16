@@ -103,9 +103,10 @@ Rules:
 - **Reminders:** while `collecting`, every `IMMAP_REMINDER_HOURS` (default 24) the bot mentions the Slack
   owner of each company that has not submitted, in the poll thread. `last_reminded_at` is stored so a
   restart does not re-ping. No reminders after the deadline, or in any other status.
-- **Admin** = Slack workspace admin or owner, read through `users.info` (existing `users:read` scope).
-  *(Open question: alternative is an `IMMAP_ADMIN_USER_IDS` env list.)* Admin actions are checked on the
-  server for every click, not only hidden in the UI.
+- **Admin** = a user whose Slack profile email is in `IMMAP_ADMIN_EMAILS` (comma-separated,
+  case-insensitive). The email comes from `users.info` (existing `users:read.email` scope). Admin actions
+  are checked on the server for every click, not only hidden in the UI. In tests the admin fixture is
+  Aurélien Rougemont (Criteo), `a.rougemont@criteo.com`; other fixture users are non-admins.
 - **Visibility:** the totals of a poll are stored when it becomes `complete` but are never shown, posted
   or returned by any command until it is `done`.
 
@@ -142,7 +143,7 @@ to `incomplete` (posting who is missing) and sends due reminders.
 | `src/premday_bot/polls.py` | `PollStore` (same SQLite file and connection pattern as `MeetingStore`) plus the lifecycle rules as plain functions (allowed transitions, extension, closing, reminders due). |
 | `src/premday_bot/slack_views.py` | Poll modal, submit modal, extend modal, card (status-dependent buttons and badges) and report blocks (additions only). |
 | `src/premday_bot/app.py` | `/immap` commands, view handlers, button actions with admin checks, sweeper. Wiring only. |
-| `src/premday_bot/config.py` | `IMMAP_REMINDER_HOURS` (default 24). |
+| `src/premday_bot/config.py` | `IMMAP_REMINDER_HOURS` (default 24), `IMMAP_ADMIN_EMAILS` (default empty: nobody is admin). |
 | `slack/app-manifest.yaml`, `README.md`, `.env.example` | Register `/immap`; document usage, lifecycle and trust model. |
 
 Tables: `companies(company_id PK, name, owner_user_id, public_key)`;
