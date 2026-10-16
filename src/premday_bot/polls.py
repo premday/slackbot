@@ -314,6 +314,19 @@ class PollStore:
                 ),
             )
 
+    def update_poll(
+        self, poll_id: str, *, expect_status: str, expect_deadline: datetime, **columns: object
+    ) -> bool:
+        """Change columns only if the poll still has the status and deadline the caller read."""
+        assignments = ", ".join(f"{name} = ?" for name in columns)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE immap_polls SET {assignments} "
+                "WHERE id = ? AND status = ? AND deadline = ?",
+                (*columns.values(), poll_id, expect_status, expect_deadline.isoformat()),
+            )
+        return cursor.rowcount == 1
+
     def get_poll(self, poll_id: str) -> Poll | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -764,7 +777,14 @@ class PollService:
         for poll in self._store.list_polls(status=COLLECTING):
             if poll.deadline <= now:
                 missing = self.missing(poll)
-                expired.append((self._save(replace(poll, status=INCOMPLETE)), missing))
+                changed = self._store.update_poll(
+                    poll.id,
+                    expect_status=COLLECTING,
+                    expect_deadline=poll.deadline,
+                    status=INCOMPLETE,
+                )
+                if changed:
+                    expired.append((replace(poll, status=INCOMPLETE), missing))
         return expired
 
     def due_reminders(self, period: timedelta) -> list[tuple[Poll, list[str]]]:
@@ -774,7 +794,14 @@ class PollService:
             reference = poll.last_reminded_at or poll.started_at
             missing = self.missing(poll)
             if poll.deadline > now and missing and reference and now - reference >= period:
-                due.append((self._save(replace(poll, last_reminded_at=now)), missing))
+                changed = self._store.update_poll(
+                    poll.id,
+                    expect_status=COLLECTING,
+                    expect_deadline=poll.deadline,
+                    last_reminded_at=now.isoformat(),
+                )
+                if changed:
+                    due.append((replace(poll, last_reminded_at=now), missing))
         return due
 
     # -- internals ------------------------------------------------------------------------------

@@ -393,3 +393,15 @@ def test_totals_beyond_what_the_companies_could_have_submitted_are_refused(tmp_p
             poll.id, email=ADMIN_EMAIL, nonce=nonce, totals=absurd, proof=proof
         )
     assert world.service.get(poll.id).status == COMPLETE
+
+
+def test_sweeper_does_not_undo_an_extension_made_after_it_read_the_poll(tmp_path) -> None:
+    world = make_world(tmp_path)
+    poll = world.collecting_poll(days=1)
+    world.clock.advance(timedelta(days=2))
+    stale = world.service._store.list_polls(status=COLLECTING)  # the sweeper's snapshot
+    extend(world, poll, ADMIN_EMAIL, 5)  # an admin extends before the sweeper saves
+    world.service._store.list_polls = lambda **_: stale  # type: ignore[method-assign]
+    assert world.service.expire_overdue() == []
+    after = world.service.get(poll.id)
+    assert after.status == COLLECTING and after.extension_count == 1
