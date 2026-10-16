@@ -655,6 +655,107 @@ class PollService:
     def submitted(self, poll: Poll) -> list[str]:
         return sorted(set(poll.participant_ids) - set(self.missing(poll)))
 
+    # -- admin actions (Slack email check + admin key proof) -----------------------------------
+
+    def begin_admin_action(self, poll_id: str, *, email: str | None, action: str) -> str:
+        admin = self._require_admin(email)
+        poll = self._get(poll_id)
+        if action == ACTION_EXTEND and poll.status not in EXTENDABLE:
+            raise PollError(f"A {poll.status} poll cannot be extended.")
+        if action == ACTION_DONE and poll.status != COMPLETE:
+            raise PollError("Only a complete poll can be validated.")
+        if action not in (ACTION_EXTEND, ACTION_DONE):
+            raise PollError("Unknown admin action.")
+        nonce = secrets.token_hex(4)
+        self._store.add_pending(nonce, poll.id, action, admin, self._clock() + NONCE_TTL)
+        return nonce
+
+    def submission_lines(self, poll_id: str, *, email: str | None) -> list[str]:
+        self._require_admin(email)
+        poll = self._get(poll_id)
+        if poll.status != COMPLETE:
+            raise PollError("Submissions are only released for a complete poll.")
+        return list(self._store.submission_lines(poll.id).values())
+
+    def extend(
+        self, poll_id: str, *, email: str | None, new_day: date, nonce: str, proof: str
+    ) -> Poll:
+        admin = self._require_admin(email)
+        poll = self._get(poll_id)
+        self._consume_nonce(nonce, poll.id, ACTION_EXTEND, admin)
+        if poll.status not in EXTENDABLE:
+            raise PollError(f"A {poll.status} poll cannot be extended.")
+        now = self._clock()
+        new_deadline = self._end_of_day(new_day)
+        if new_deadline <= max(poll.deadline, now):
+            raise PollError("The new deadline must be later than the current one.")
+        self._verify(poll, admin, ACTION_EXTEND, new_day.isoformat(), nonce, proof)
+        updated = replace(
+            poll, deadline=new_deadline, extension_count=poll.extension_count + 1
+        )
+        if poll.status == INCOMPLETE:
+            updated = replace(updated, status=COLLECTING, last_reminded_at=now)
+        return self._save(updated)
+
+    def mark_done(
+        self, poll_id: str, *, email: str | None, nonce: str, totals: dict[str, int], proof: str
+    ) -> Poll:
+        admin = self._require_admin(email)
+        poll = self._get(poll_id)
+        self._consume_nonce(nonce, poll.id, ACTION_DONE, admin)
+        if poll.status != COMPLETE:
+            raise PollError("Only a complete poll can be validated.")
+        valid = set(totals) == set(poll.metrics) and all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value < immap.MODULUS
+            for value in totals.values()
+        )
+        if not valid:
+            raise PollError("The totals do not match the poll's metrics.")
+        self._verify(poll, admin, ACTION_DONE, immap.totals_digest(totals), nonce, proof)
+        return self._save(
+            replace(
+                poll,
+                status=DONE,
+                totals=totals,
+                validated_by=admin,
+                validated_at=self._clock(),
+            )
+        )
+
+    # -- reading results ----------------------------------------------------------------------
+
+    def report(self, poll_id: str) -> Poll:
+        poll = self._get(poll_id)
+        if poll.status != DONE:
+            raise PollError("This poll has not been validated yet.")
+        return poll
+
+    def done_polls(self, channel_id: str) -> list[Poll]:
+        return self._store.list_polls(status=DONE, channel_id=channel_id)
+
+    # -- time-driven transitions ---------------------------------------------------------------
+
+    def expire_overdue(self) -> list[tuple[Poll, list[str]]]:
+        now = self._clock()
+        expired = []
+        for poll in self._store.list_polls(status=COLLECTING):
+            if poll.deadline <= now:
+                missing = self.missing(poll)
+                expired.append((self._save(replace(poll, status=INCOMPLETE)), missing))
+        return expired
+
+    def due_reminders(self, period: timedelta) -> list[tuple[Poll, list[str]]]:
+        now = self._clock()
+        due = []
+        for poll in self._store.list_polls(status=COLLECTING):
+            reference = poll.last_reminded_at or poll.started_at
+            missing = self.missing(poll)
+            if poll.deadline > now and missing and reference and now - reference >= period:
+                due.append((self._save(replace(poll, last_reminded_at=now)), missing))
+        return due
+
     # -- internals ------------------------------------------------------------------------------
 
     def _get(self, poll_id: str) -> Poll:
@@ -669,6 +770,37 @@ class PollService:
 
     def _end_of_day(self, day: date) -> datetime:
         return datetime.combine(day, time(23, 59, 59), tzinfo=self._tz)
+
+    def _consume_nonce(self, nonce: str, poll_id: str, action: str, admin: str) -> None:
+        row = self._store.pop_pending(nonce)
+        valid = (
+            row is not None
+            and row["poll_id"] == poll_id
+            and row["action"] == action
+            and row["admin_email"] == admin
+            and datetime.fromisoformat(row["expires_at"]) > self._clock()
+        )
+        if not valid:
+            raise PollError("This admin step expired or was already used. Start it again.")
+
+    def _verify(
+        self, poll: Poll, admin: str, action: str, argument: str, nonce: str, proof: str
+    ) -> None:
+        keys = dict(poll.admins)
+        if admin not in keys:
+            raise PollError("Your admin key was not registered when this poll was created.")
+        ok = immap.check_proof(
+            int(poll.bot_private_key, 16),
+            keys[admin],
+            poll_id=poll.id,
+            action=action,
+            argument=argument,
+            nonce=nonce,
+            proof=unfence(proof),
+        )
+        if not ok:
+            raise PollError("The admin key proof is invalid.")
+
 
 
 def _normalized_key(public_key: str) -> str:
