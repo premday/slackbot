@@ -150,8 +150,12 @@ Rules:
   card shows **Extended ×n** and the original deadline.
 - **Start collecting** is refused if the deadline has passed (extend first).
 - **Reminders:** while `collecting`, every `IMMAP_REMINDER_HOURS` (default 24, minimum 1), the bot mentions
-  the Slack owners of the companies that have not submitted, in the poll thread. First reminder one period
+  every member of the companies that have not submitted, in the poll thread. First reminder one period
   after starting; `last_reminded_at` survives restarts; none after the deadline or in other statuses.
+- **Colleague notice:** when a member submits (or resubmits) for a company that has other members, the bot
+  mentions those colleagues in the poll thread: who submitted, that they need not, and that a new
+  submission before the deadline replaces it. Companies with a single member get no notice. The notice
+  reveals nothing the card does not already show (which companies have submitted).
 - **Admin** = Slack profile email in `IMMAP_ADMIN_EMAILS` (comma-separated, case-insensitive; empty means
   nobody). Any one admin suffices. Admin checks run on the server for every click. Test fixtures:
   Aurélien Rougemont (Criteo), `a.rougemont@criteo.com`, plus a second admin and a non-admin.
@@ -167,11 +171,11 @@ One new slash command, `/immap`, no new OAuth scopes.
 
 | Command | Behavior |
 |---|---|
-| `/immap register <public_key>` | **Enrollment**: any Slack user stores their public key (one key per user, a key belongs to one user; running it again rotates the key). The user then waits for an admin to attribute a company. |
-| `/immap companies` | Admins only. Lists every company with its attributed user and key fingerprint, and the enrolled users who have no company yet. |
+| `/immap register <public_key>` | **Enrollment**: any Slack user stores their public key (one key per user, a key belongs to one user; running it again rotates the key). The user then waits for an admin to add them to a company. |
+| `/immap companies` | Admins only. Lists every company with its members (the first is the key holder) and key fingerprint, and the enrolled users who have no company yet. |
 | `/immap company add <id>` / `remove <id>` | Admins only. Maintains the list of companies (`id` is `[a-z0-9-]{2,32}`). |
-| `/immap company attribute` | Admins only. Modal: pick a company and an enrolled Slack user; that user now answers for the company and the company's key is theirs. A user answers for one company; attributing a company replaces its previous user. |
-| `/immap company unattribute <id>` | Admins only. The company keeps existing but has no user and cannot join a poll. |
+| `/immap company attribute` | Admins only. Modal: pick a company and an enrolled Slack user to add as a **member**. A company has several members, a user belongs to one company, and the first member is the **key holder**: the company's key is their enrolled key, which colleagues use by sharing the private key file. Any member can submit for the company. |
+| `/immap company unattribute` | Admins only. Modal: pick a user to remove from their company. If the key holder leaves, the next member becomes holder; a company left without members cannot join a poll. |
 | `/immap admin-register <public_key>` | Admins only: registers or replaces their admin key (max 5 admins with keys). |
 | `/immap poll` | Modal: title (≤150 chars), template, deadline date (default +7 days), companies (multi-select). Needs ≥3 companies and ≥1 admin key; the card warns below 10 companies (IMMAP's recommendation). Creates a poll in `created`. |
 | `/immap report [poll_id]` | Ephemeral. No argument: validated polls of this channel. With an id: title, companies, extension badge and totals. Anything not `done` is refused. |
@@ -196,7 +200,7 @@ A periodic task started in `run()` (every 60 s) moves `collecting` polls past th
 | `src/premday_bot/app.py`, `config.py` | Wiring; `IMMAP_REMINDER_HOURS`, `IMMAP_ADMIN_EMAILS`. |
 | `slack/app-manifest.yaml`, `README.md`, `.env.example` | Command registration and docs. |
 
-Tables: `enrollments(user_id PK, public_key UNIQUE)`; `companies(company_id PK, owner_user_id UNIQUE NULL)` (a company's key is its owner's enrolled key); `admin_keys(admin_email PK, public_key)`;
+Tables: `enrollments(user_id PK, public_key UNIQUE)`; `companies(company_id PK)`; `company_members(user_id PK, company_id)` (the key of a company is the enrolled key of its oldest member); `admin_keys(admin_email PK, public_key)`;
 `immap_polls(id PK, channel_id, creator_user_id, title, template, schema_version, metrics, status, deadline,
 original_deadline, extension_count, participants JSON, admins JSON, bot_public_key, bot_private_key,
 message_ts, started_at, last_reminded_at, totals JSON, validated_by, validated_at)`;
@@ -222,8 +226,9 @@ RSVP code is untouched.
   `collecting` is allowed.
 - Company management is by admin Slack identity only (no key proof): it decides who may answer for a
   company, and the key fingerprints on the poll card and in `poll.json` let companies detect a wrong
-  attribution. A company that is in a poll that is not `done` cannot be removed, attributed or unattributed
-  (its key is snapshotted there), so the list can only change between polls.
+  attribution. A company that is in a poll that is not `done` cannot be removed, and its key holder cannot leave
+  (its key is snapshotted there). Adding a member or removing another one is always allowed, so a company
+  can add a colleague who must answer while a poll is open.
 - An admin whose key was registered after a poll's creation cannot open or act on that poll.
 - No dropout recovery: an `incomplete` poll is extended or replaced by a new poll without the missing
   company.
@@ -243,7 +248,8 @@ the sweeper (with a fake client) and a registration test on a real Bolt app.
   collecting keeps submissions; completion on the Nth line; visibility gate for every non-`done` state;
   non-admin refusal everywhere; Slack email alone insufficient; another admin's proof refused; proof
   covers the totals; nonces single-use, expiring, bound to poll, action and admin; reminder timing.
-- Company management: enrollment rules, add/remove, attribution and unattribution, admin-only refusals, freezing while a poll is open, companies without a user cannot join a poll; the `/immap` command paths and the attribute modal are driven through a capturing fake Bolt app.
+- Colleague notice: the right people are mentioned (not the submitter), single-member companies get none, non-members are refused; reminders mention every member.
+- Company management: enrollment rules, add/remove, several members per company, key-holder succession, admin-only refusals, freezing of the key while a poll is open, companies without a member cannot join a poll, only members can submit; the `/immap` command paths and the attribute modal are driven through a capturing fake Bolt app.
 - Review-focus cases: duplicate public keys, pasted code fences, polls before setup, long titles.
 - `ruff check`, `pyright`, `pytest` stay green.
 

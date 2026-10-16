@@ -95,8 +95,10 @@ each metric is answered by the same set of companies, and it is also what makes 
 ## Participating Companies
 
 Each company is a named entry in a list kept by the admins. A Slack user enrolls with the public half of a
-long-lived key pair (`immap.py keygen`); an admin then **attributes** the company to that user. The user
+long-lived key pair (`immap.py keygen`); an admin then **attributes** the company to that user (and later to colleagues). The user
 computes and submits **one** sealed line per poll for their company.
+Several people can belong to a company: the first holds the company key (colleagues share the key file), any
+member can submit, and the others are told in the poll thread when a colleague has answered.
 
 ## Admins
 
