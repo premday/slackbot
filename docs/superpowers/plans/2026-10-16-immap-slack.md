@@ -31,7 +31,7 @@ Inputs and conditions the spec implies but does not spell out. Each has a test i
 
 1. **Two users enrolling the same public key** — `submit` would seal as whichever company matches first. Expected: the second enrollment is refused with a clear message. Test `test_two_users_cannot_share_a_public_key` (Task 2).
 2. **Values pasted from a Slack code block** (backticks or ``` fences around a line, a proof, or the aggregate JSON). Expected: accepted and stored clean. Tests `test_unfence_strips_slack_code_markup` (Task 2), `test_a_submission_pasted_from_a_slack_code_block_is_accepted` (Task 3), `test_a_proof_and_totals_pasted_with_code_fences_are_accepted` (Task 4).
-3. **`/immap poll` before setup is complete** (fewer than 3 companies with an attributed user, or no admin key). Expected: a plain message instead of a Slack API failure on an empty option list. Test `test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist` (Task 2).
+3. **`/immap poll` before setup is complete** (fewer than 3 companies with a member, or no admin key). Expected: a plain message instead of a Slack API failure on an empty option list. Test `test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist` (Task 2).
 4. **Sloppy hexadecimal in public keys** (`0x` prefix, underscores, signs, spaces; Python's `int(x, 16)` accepts several). Expected: refused. Tests `test_public_key_validation` (Task 1) and `test_pasted_keys_may_carry_backticks_but_not_hex_prefixes` (Task 2).
 5. **Very long poll titles** (Slack block text limits). Expected: refused above 150 characters, and the modal input is limited too. Test `test_titles_are_limited_in_length` (Task 2).
 
@@ -864,10 +864,10 @@ git commit -m "Keep the crypto testable apart from Slack and runnable by anyone"
 - Consumes: from Task 1 `immap.generate_private_key`, `public_key`, `parse_public_key`, `fingerprint`, `POLL_TEMPLATES`, `DEFAULT_TEMPLATE`.
 - Produces:
   - constants `CREATED, COLLECTING, COMPLETE, INCOMPLETE, DONE`, `MIN_PARTICIPANTS`, `RECOMMENDED_PARTICIPANTS`, `MAX_ADMIN_KEYS`, `MAX_TITLE_LENGTH`, `NONCE_TTL`, `EXTENDABLE`, `ACTION_EXTEND`, `ACTION_DONE`
-  - `PollError(Exception)` (messages are safe to show users), frozen dataclasses `Company(company_id, owner_user_id | None, public_key | None)` (key = the attributed user's enrolled key) and `Poll(id, channel_id, creator_user_id, title, template, schema_version, metrics, status, deadline, original_deadline, extension_count, participants, admins, bot_public_key, bot_private_key, message_ts, started_at, last_reminded_at, totals, validated_by, validated_at)` with property `participant_ids`
+  - `PollError(Exception)` (messages are safe to show users), frozen dataclasses `Company(company_id, members: tuple[str, ...], public_key | None)` (members oldest first; the key is the first member's enrolled key, the "key holder") and `Poll(id, channel_id, creator_user_id, title, template, schema_version, metrics, status, deadline, original_deadline, extension_count, participants, admins, bot_public_key, bot_private_key, message_ts, started_at, last_reminded_at, totals, validated_by, validated_at)` with property `participant_ids`
   - `unfence(text) -> str`, `is_admin(email, admin_emails) -> bool`, `poll_document(poll) -> dict` (the `poll.json`, never containing `bot_private_key`)
-  - `PollStore(db_path)` with `upsert_enrollment`, `enrollments`, `add_company`, `delete_company`, `set_company_owner`, `get_company`, `list_companies`, `upsert_admin_key`, `admin_keys() -> dict[email, key]`, `save_poll`, `get_poll`, `list_polls(status=None, channel_id=None)`, `put_submission`, `submission_lines(poll_id) -> dict[company_id, line]`, `add_pending`, `pop_pending`
-  - `PollService(store, *, timezone: str, admin_emails: frozenset[str] = frozenset(), clock=...)` with `is_admin`, `enroll(*, user_id, public_key) -> str` (fingerprint), admin-only `add_company`, `remove_company`, `attribute_company(*, email, company_id, user_id) -> Company`, `unattribute_company`, `companies(*, email) -> list[Company]`, `unattributed_users(*, email) -> list[str]` (all keyword-only with `email`), `pollable_company_ids() -> list[str]`, `register_admin_key(*, email, public_key) -> str` (fingerprint), `create_poll(*, channel_id, creator_user_id, title, deadline_day: date, participants: list[str], template: str = immap.DEFAULT_TEMPLATE) -> Poll` (unknown template raises `PollError`), `get(poll_id) -> Poll`, `set_message_ts(poll_id, message_ts) -> Poll`
+  - `PollStore(db_path)` with `upsert_enrollment`, `enrollments`, `add_company`, `delete_company`, `add_member`, `remove_member`, `get_company`, `list_companies`, `upsert_admin_key`, `admin_keys() -> dict[email, key]`, `save_poll`, `get_poll`, `list_polls(status=None, channel_id=None)`, `put_submission`, `submission_lines(poll_id) -> dict[company_id, line]`, `add_pending`, `pop_pending`
+  - `PollService(store, *, timezone: str, admin_emails: frozenset[str] = frozenset(), clock=...)` with `is_admin`, `enroll(*, user_id, public_key) -> str` (fingerprint), admin-only `add_company`, `remove_company`, `attribute_company(*, email, company_id, user_id) -> Company` (adds a member), `unattribute_user(*, email, user_id) -> str`, `company_of(user_id) -> str | None`, `members_of(company_id) -> list[str]`, `companies(*, email) -> list[Company]`, `unattributed_users(*, email) -> list[str]` (all keyword-only with `email`), `pollable_company_ids() -> list[str]`, `register_admin_key(*, email, public_key) -> str` (fingerprint), `create_poll(*, channel_id, creator_user_id, title, deadline_day: date, participants: list[str], template: str = immap.DEFAULT_TEMPLATE) -> Poll` (unknown template raises `PollError`), `get(poll_id) -> Poll`, `set_message_ts(poll_id, message_ts) -> Poll`
   - test helpers: `Clock`, `World` (fields `service, store, clock, company_keys, admin_keys`; methods `new_poll`, `collecting_poll`, `line`, `submit`, `complete_poll`, `admin_totals`, `expected_totals`, `extend_proof`), `make_world(tmp_path)`, constants `ADMIN_EMAIL` (Aurélien Rougemont, `a.rougemont@criteo.com`), `SECOND_ADMIN_EMAIL`, `NOT_ADMIN_EMAIL`, `ADMIN_EMAILS`, `COMPANIES`, `owner(company_id)`, `values_for(company_id)`
 
 - [ ] **Step 1: Write the test helpers and the failing tests**
@@ -1035,9 +1035,9 @@ def test_admin_is_decided_by_email_case_insensitively() -> None:
     assert not is_admin("a.rougemont@criteo.com", frozenset())
 
 
-def owner_of(service: PollService, company_id: str) -> str | None:
+def members_of(service: PollService, company_id: str) -> tuple[str, ...]:
     companies = {c.company_id: c for c in service.companies(email=ADMIN_EMAIL)}
-    return companies[company_id].owner_user_id
+    return companies[company_id].members
 
 
 def test_enrolling_needs_a_valid_key_and_unique_keys(tmp_path) -> None:
@@ -1048,11 +1048,11 @@ def test_enrolling_needs_a_valid_key_and_unique_keys(tmp_path) -> None:
         world.service.enroll(user_id="U_OTHER", public_key=key)
     with pytest.raises(PollError, match="Invalid public key"):
         world.service.enroll(user_id="U_NEW", public_key="zz")
-    # Enrolling again replaces your key (rotation); the attributed company follows it.
+    # Enrolling again replaces your key (rotation); the company follows its key holder.
     new_key = immap.public_key(immap.generate_private_key())
     world.service.enroll(user_id=owner("acme"), public_key=new_key)
     company = next(c for c in world.service.companies(email=ADMIN_EMAIL) if c.company_id == "acme")
-    assert company.public_key == new_key and company.owner_user_id == owner("acme")
+    assert company.public_key == new_key and company.members == (owner("acme"),)
 
 
 def test_admins_manage_the_list_of_companies(tmp_path) -> None:
@@ -1066,36 +1066,45 @@ def test_admins_manage_the_list_of_companies(tmp_path) -> None:
             service.add_company(email=ADMIN_EMAIL, company_id=bad_id)
     listed = {c.company_id: c for c in service.companies(email=SECOND_ADMIN_EMAIL)}
     assert set(listed) == {*COMPANIES, "newco"}
-    assert listed["newco"].owner_user_id is None and listed["newco"].public_key is None
+    assert listed["newco"].members == () and listed["newco"].public_key is None
     service.remove_company(email=ADMIN_EMAIL, company_id="newco")
     assert "newco" not in {c.company_id for c in service.companies(email=ADMIN_EMAIL)}
     with pytest.raises(PollError, match="does not exist"):
         service.remove_company(email=ADMIN_EMAIL, company_id="newco")
 
 
-def test_admins_attribute_companies_to_enrolled_users(tmp_path) -> None:
+def test_admins_add_enrolled_users_to_a_company_and_the_first_holds_the_key(tmp_path) -> None:
     world = make_world(tmp_path)
     service = world.service
-    key = immap.public_key(immap.generate_private_key())
+    first_key = immap.public_key(immap.generate_private_key())
+    second_key = immap.public_key(immap.generate_private_key())
     service.add_company(email=ADMIN_EMAIL, company_id="newco")
     with pytest.raises(PollError, match="has not enrolled"):
-        service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_NEW")
-    service.enroll(user_id="U_NEW", public_key=key)
-    assert service.unattributed_users(email=ADMIN_EMAIL) == ["U_NEW"]
-    company = service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_NEW")
-    assert (company.owner_user_id, company.public_key) == ("U_NEW", key)
+        service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_ONE")
+    service.enroll(user_id="U_ONE", public_key=first_key)
+    service.enroll(user_id="U_TWO", public_key=second_key)
+    assert service.unattributed_users(email=ADMIN_EMAIL) == ["U_ONE", "U_TWO"]
+    service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_ONE")
+    company = service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_TWO")
+    assert company.members == ("U_ONE", "U_TWO") and company.public_key == first_key
+    assert service.attribute_company(email=ADMIN_EMAIL, company_id="newco", user_id="U_ONE") == (
+        company
+    )
     assert service.unattributed_users(email=ADMIN_EMAIL) == []
-    assert owner_of(service, "newco") == "U_NEW"
+    assert service.members_of("newco") == ["U_ONE", "U_TWO"]
+    assert service.company_of("U_TWO") == "newco" and service.company_of("U_STRANGER") is None
     with pytest.raises(PollError, match="does not exist"):
-        service.attribute_company(email=ADMIN_EMAIL, company_id="ghost", user_id="U_NEW")
-    # One company per user; reassigning a company replaces its user.
-    with pytest.raises(PollError, match="already answers for `newco`"):
-        service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW")
-    service.unattribute_company(email=ADMIN_EMAIL, company_id="newco")
-    assert owner_of(service, "newco") is None
-    service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW")
-    assert owner_of(service, "acme") == "U_NEW"
-    assert service.unattributed_users(email=ADMIN_EMAIL) == [owner("acme")]
+        service.attribute_company(email=ADMIN_EMAIL, company_id="ghost", user_id="U_ONE")
+    # A user belongs to one company.
+    with pytest.raises(PollError, match="already belongs to `newco`"):
+        service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_TWO")
+    assert service.unattribute_user(email=ADMIN_EMAIL, user_id="U_ONE") == "newco"
+    company = next(c for c in service.companies(email=ADMIN_EMAIL) if c.company_id == "newco")
+    assert company.members == ("U_TWO",) and company.public_key == second_key  # key holder moves
+    with pytest.raises(PollError, match="does not belong"):
+        service.unattribute_user(email=ADMIN_EMAIL, user_id="U_ONE")
+    service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_ONE")
+    assert members_of(service, "acme") == (owner("acme"), "U_ONE")
 
 
 def test_company_management_is_for_admins_only(tmp_path) -> None:
@@ -1106,7 +1115,7 @@ def test_company_management_is_for_admins_only(tmp_path) -> None:
             lambda e=email: service.add_company(email=e, company_id="newco"),
             lambda e=email: service.remove_company(email=e, company_id="acme"),
             lambda e=email: service.attribute_company(email=e, company_id="acme", user_id="U1"),
-            lambda e=email: service.unattribute_company(email=e, company_id="acme"),
+            lambda e=email: service.unattribute_user(email=e, user_id=owner("acme")),
             lambda e=email: service.companies(email=e),
             lambda e=email: service.unattributed_users(email=e),
         ):
@@ -1115,27 +1124,29 @@ def test_company_management_is_for_admins_only(tmp_path) -> None:
     assert len(service.companies(email=ADMIN_EMAIL)) == len(COMPANIES)
 
 
-def test_companies_in_an_open_poll_cannot_change_until_it_is_done(tmp_path) -> None:
+def test_a_companys_key_cannot_change_while_it_is_in_an_open_poll(tmp_path) -> None:
     world = make_world(tmp_path)
     service = world.service
     poll = world.new_poll()
     service.enroll(user_id="U_NEW", public_key=immap.public_key(immap.generate_private_key()))
     for call in (
         lambda: service.remove_company(email=ADMIN_EMAIL, company_id="acme"),
-        lambda: service.unattribute_company(email=ADMIN_EMAIL, company_id="acme"),
-        lambda: service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW"),
+        lambda: service.unattribute_user(email=ADMIN_EMAIL, user_id=owner("acme")),  # key holder
     ):
         with pytest.raises(PollError, match=f"open poll `{poll.id}`"):
             call()
+    # Adding a colleague, and removing a non-holder, leave the key alone, so they stay possible.
+    service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_NEW")
+    assert service.unattribute_user(email=ADMIN_EMAIL, user_id="U_NEW") == "acme"
     # A company that is not in that poll is free to change.
     service.add_company(email=ADMIN_EMAIL, company_id="other")
     service.remove_company(email=ADMIN_EMAIL, company_id="other")
 
 
-def test_a_company_without_a_user_cannot_join_a_poll(tmp_path) -> None:
+def test_a_company_without_a_member_cannot_join_a_poll(tmp_path) -> None:
     world = make_world(tmp_path)
     world.service.add_company(email=ADMIN_EMAIL, company_id="empty")
-    with pytest.raises(PollError, match="no user attributed"):
+    with pytest.raises(PollError, match="no member"):
         world.new_poll(participants=[*COMPANIES, "empty"])
     assert "empty" not in world.service.pollable_company_ids()
 
@@ -1228,7 +1239,7 @@ def test_pollable_companies_are_listed_sorted(tmp_path) -> None:
 def test_polls_cannot_start_before_enough_companies_and_an_admin_key_exist(tmp_path) -> None:
     store = PollStore(tmp_path / "early.sqlite3")
     service = PollService(store, timezone="UTC", admin_emails=ADMIN_EMAILS)
-    with pytest.raises(PollError, match="At least 3 companies need an attributed user"):
+    with pytest.raises(PollError, match="At least 3 companies need a member"):
         service.pollable_company_ids()
     for company_id in COMPANIES:
         enroll_and_attribute(service, company_id, immap.public_key(immap.generate_private_key()))
@@ -1366,8 +1377,8 @@ class PollError(Exception):
 @dataclass(frozen=True)
 class Company:
     company_id: str
-    owner_user_id: str | None  # the Slack user an admin attributed the company to
-    public_key: str | None  # that user's enrolled key; None while nobody is attributed
+    members: tuple[str, ...]  # Slack users attributed to the company, oldest first
+    public_key: str | None  # enrolled key of the first member (key holder); None without members
 
 
 @dataclass(frozen=True)
@@ -1459,8 +1470,15 @@ class PollStore:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS companies (
-                    company_id TEXT PRIMARY KEY,
-                    owner_user_id TEXT UNIQUE
+                    company_id TEXT PRIMARY KEY
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS company_members (
+                    user_id TEXT PRIMARY KEY,
+                    company_id TEXT NOT NULL REFERENCES companies (company_id)
                 )
                 """
             )
@@ -1543,29 +1561,45 @@ class PollStore:
 
     def delete_company(self, company_id: str) -> None:
         with self._connect() as connection:
+            connection.execute("DELETE FROM company_members WHERE company_id = ?", (company_id,))
             connection.execute("DELETE FROM companies WHERE company_id = ?", (company_id,))
 
-    def set_company_owner(self, company_id: str, owner_user_id: str | None) -> None:
+    def add_member(self, company_id: str, user_id: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE companies SET owner_user_id = ? WHERE company_id = ?",
-                (owner_user_id, company_id),
+                "INSERT INTO company_members (user_id, company_id) VALUES (?, ?)",
+                (user_id, company_id),
             )
+
+    def remove_member(self, user_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM company_members WHERE user_id = ?", (user_id,))
 
     def get_company(self, company_id: str) -> Company | None:
         return next((c for c in self.list_companies() if c.company_id == company_id), None)
 
     def list_companies(self) -> list[Company]:
         with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT companies.company_id, companies.owner_user_id, enrollments.public_key
-                FROM companies LEFT JOIN enrollments
-                    ON enrollments.user_id = companies.owner_user_id
-                ORDER BY companies.company_id
-                """
+            companies = connection.execute(
+                "SELECT company_id FROM companies ORDER BY company_id"
             ).fetchall()
-        return [Company(r["company_id"], r["owner_user_id"], r["public_key"]) for r in rows]
+            members = connection.execute(
+                "SELECT company_id, user_id FROM company_members ORDER BY rowid"
+            ).fetchall()
+            keys = {
+                row["user_id"]: row["public_key"]
+                for row in connection.execute("SELECT * FROM enrollments").fetchall()
+            }
+        by_company: dict[str, list[str]] = {}
+        for row in members:
+            by_company.setdefault(row["company_id"], []).append(row["user_id"])
+        result = []
+        for row in companies:
+            users = by_company.get(row["company_id"], [])
+            result.append(
+                Company(row["company_id"], tuple(users), keys.get(users[0]) if users else None)
+            )
+        return result
 
     def upsert_admin_key(self, admin_email: str, public_key: str) -> None:
         with self._connect() as connection:
@@ -1760,27 +1794,35 @@ class PollService:
         self._store.delete_company(company_id)
 
     def attribute_company(self, *, email: str | None, company_id: str, user_id: str) -> Company:
-        """Make an enrolled Slack user the one who answers for a company (replaces the previous)."""
+        """Add an enrolled Slack user to a company. The first member is the key holder."""
         self._require_admin(email)
-        self._existing_company(company_id)
+        company = self._existing_company(company_id)
         if user_id not in self._store.enrollments():
             raise PollError(
                 f"<@{user_id}> has not enrolled yet (`/immap register <public_key>`)."
             )
         for other in self._store.list_companies():
-            if other.owner_user_id == user_id and other.company_id != company_id:
+            if user_id in other.members:
+                if other.company_id == company_id:
+                    return company
                 raise PollError(
-                    f"<@{user_id}> already answers for `{other.company_id}`; unattribute it first."
+                    f"<@{user_id}> already belongs to `{other.company_id}`; remove them first."
                 )
-        self._require_no_open_poll(company_id)
-        self._store.set_company_owner(company_id, user_id)
+        self._store.add_member(company_id, user_id)
         return self._existing_company(company_id)
 
-    def unattribute_company(self, *, email: str | None, company_id: str) -> None:
+    def unattribute_user(self, *, email: str | None, user_id: str) -> str:
+        """Remove a user from their company; returns the company id."""
         self._require_admin(email)
-        self._existing_company(company_id)
-        self._require_no_open_poll(company_id)
-        self._store.set_company_owner(company_id, None)
+        company = next(
+            (c for c in self._store.list_companies() if user_id in c.members), None
+        )
+        if company is None:
+            raise PollError(f"<@{user_id}> does not belong to a company.")
+        if company.members[0] == user_id:
+            self._require_no_open_poll(company.company_id)  # the company key would change
+        self._store.remove_member(user_id)
+        return company.company_id
 
     def companies(self, *, email: str | None) -> list[Company]:
         self._require_admin(email)
@@ -1789,15 +1831,15 @@ class PollService:
     def unattributed_users(self, *, email: str | None) -> list[str]:
         """Enrolled Slack users no company is attributed to yet."""
         self._require_admin(email)
-        owners = {c.owner_user_id for c in self._store.list_companies()}
-        return [user for user in self._store.enrollments() if user not in owners]
+        members = {user for c in self._store.list_companies() for user in c.members}
+        return [user for user in self._store.enrollments() if user not in members]
 
     def pollable_company_ids(self) -> list[str]:
         """Companies a poll can include; fails early when a poll could not be created."""
         companies = [c.company_id for c in self._store.list_companies() if c.public_key]
         if len(companies) < MIN_PARTICIPANTS:
             raise PollError(
-                f"At least {MIN_PARTICIPANTS} companies need an attributed user "
+                f"At least {MIN_PARTICIPANTS} companies need a member "
                 "(`/immap companies`, `/immap company attribute`)."
             )
         if not any(email in self._admin_emails for email in self._store.admin_keys()):
@@ -1811,7 +1853,7 @@ class PollService:
         return company
 
     def _require_no_open_poll(self, company_id: str) -> None:
-        """A company's key is snapshotted in its polls, so it is frozen until they are done."""
+        """A company's key is snapshotted in its polls, so it cannot change until they are done."""
         for poll in self._store.list_polls():
             if poll.status != DONE and company_id in poll.participant_ids:
                 raise PollError(
@@ -1826,6 +1868,15 @@ class PollService:
             raise PollError(f"At most {MAX_ADMIN_KEYS} admin keys can be registered.")
         self._store.upsert_admin_key(admin, key)
         return immap.fingerprint(key)
+
+    def company_of(self, user_id: str) -> str | None:
+        return next(
+            (c.company_id for c in self._store.list_companies() if user_id in c.members), None
+        )
+
+    def members_of(self, company_id: str) -> list[str]:
+        company = self._store.get_company(company_id)
+        return list(company.members) if company else []
 
     # -- creating and starting ----------------------------------------------------------------
 
@@ -1856,7 +1907,7 @@ class PollService:
             if company is None:
                 raise PollError(f"`{company_id}` does not exist.")
             if company.public_key is None:
-                raise PollError(f"`{company_id}` has no user attributed yet.")
+                raise PollError(f"`{company_id}` has no member yet.")
             pairs.append((company.company_id, company.public_key))
         admins = tuple(
             (email, key)
@@ -1939,7 +1990,7 @@ git commit -m "Give polls a durable home and let admins own the company list" -m
 
 **Interfaces:**
 - Consumes: Task 2 (`PollService`, `PollStore`, `Poll`, `PollError`, `unfence`, `CREATED`, `COLLECTING`, `COMPLETE`, helpers `make_world`, `owner`, `values_for`), Task 1 (`immap.parse_line`, `immap.check_envelope`, `immap.fingerprint`, `immap.seal`; tests use `helpers.TEMPLATE_METRICS`).
-- Produces: `PollService.start(poll_id, *, user_id, email) -> Poll`, `submit(poll_id, *, user_id, line) -> Poll` (moves the poll to `complete` when the last company submits; the bot never decrypts anything), `missing(poll) -> list[str]`, `submitted(poll) -> list[str]`, `owner_of(company_id) -> str | None`.
+- Produces: `PollService.start(poll_id, *, user_id, email) -> Poll`, `submit(poll_id, *, user_id, line) -> Poll` (moves the poll to `complete` when the last company submits; the bot never decrypts anything), `missing(poll) -> list[str]`, `submitted(poll) -> list[str]`, (only members of a company may submit for it; `members_of`, `company_of` come from Task 2).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2010,7 +2061,7 @@ def test_submit_validation(tmp_path) -> None:
     world = make_world(tmp_path, companies=(*COMPANIES, "dyna"))
     poll = world.collecting_poll(participants=list(COMPANIES))
     good = world.line(poll, "acme")
-    with pytest.raises(PollError, match="not the user attributed"):
+    with pytest.raises(PollError, match="not a member of"):
         world.service.submit(poll.id, user_id=owner("bolt"), line=good)
     with pytest.raises(PollError, match="not part of this poll"):
         world.service.submit(poll.id, user_id=owner("dyna"), line=good.replace(".acme.", ".dyna."))
@@ -2113,8 +2164,8 @@ In `src/premday_bot/polls.py`, insert this block immediately **before** the line
         except ValueError as error:
             raise PollError(str(error)) from error
         company = self._store.get_company(company_id)
-        if company is None or company.owner_user_id != user_id:
-            raise PollError(f"You are not the user attributed to `{company_id}`.")
+        if company is None or user_id not in company.members:
+            raise PollError(f"You are not a member of `{company_id}`.")
         self._store.put_submission(poll.id, company_id, line, self._clock())
         if not self.missing(poll):
             poll = self._save(replace(poll, status=COMPLETE))
@@ -2126,10 +2177,6 @@ In `src/premday_bot/polls.py`, insert this block immediately **before** the line
 
     def submitted(self, poll: Poll) -> list[str]:
         return sorted(set(poll.participant_ids) - set(self.missing(poll)))
-
-    def owner_of(self, company_id: str) -> str | None:
-        company = self._store.get_company(company_id)
-        return company.owner_user_id if company else None
 ````
 
 - [ ] **Step 4: Run tests, lint and types**
@@ -2704,7 +2751,7 @@ git commit -m "Keep results hidden until an admin validates them" -m "Add admin-
 
 **Interfaces:**
 - Consumes: Task 2/4 (`Poll`, `poll_document`, statuses, `RECOMMENDED_PARTICIPANTS`, `MAX_TITLE_LENGTH`), Task 1 (`immap.POLL_TEMPLATES`, `immap.fingerprint`).
-- Produces: callback/action id constants `POLL_CALLBACK_ID, SUBMIT_CALLBACK_ID, EXTEND_CALLBACK_ID, DONE_CALLBACK_ID, START_ACTION_ID, SUBMIT_ACTION_ID, EXTEND_ACTION_ID, VALIDATE_ACTION_ID`, `HELP_TEXT`, `escape(str) -> str`, `poll_modal(*, channel_id, company_ids, default_deadline: date) -> dict` (title, template select, deadline, companies), `poll_template_label(poll) -> str`, `submit_modal(*, poll_id, title)`, `extend_modal(*, poll_id, nonce, current_deadline: date)`, `validate_modal(*, poll_id, nonce)`, `poll_card(poll, *, submitted, missing) -> tuple[str, list[dict]]`, `poll_json_message(poll) -> str`, `chunk_lines(lines, limit=3500) -> list[str]`, `report_text(poll) -> str` (requires `poll.totals`), `done_list_text(polls) -> str`.
+- Produces: callback/action id constants `POLL_CALLBACK_ID, SUBMIT_CALLBACK_ID, EXTEND_CALLBACK_ID, DONE_CALLBACK_ID, START_ACTION_ID, SUBMIT_ACTION_ID, EXTEND_ACTION_ID, VALIDATE_ACTION_ID`, `HELP_TEXT`, `escape(str) -> str`, `poll_modal(*, channel_id, company_ids, default_deadline: date) -> dict` (title, template select, deadline, companies), `poll_template_label(poll) -> str`, `companies_text(companies, unattributed) -> str`, `answered_text(company_id, submitter, colleagues) -> str`, `attribute_modal(company_ids)`, `unattribute_modal()`, `notice_modal(title, text)`, `submit_modal(*, poll_id, title)`, `extend_modal(*, poll_id, nonce, current_deadline: date)`, `validate_modal(*, poll_id, nonce)`, `poll_card(poll, *, submitted, missing) -> tuple[str, list[dict]]`, `poll_json_message(poll) -> str`, `chunk_lines(lines, limit=3500) -> list[str]`, `report_text(poll) -> str` (requires `poll.totals`), `done_list_text(polls) -> str`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2721,6 +2768,7 @@ from premday_bot.immap_views import (
     START_ACTION_ID,
     SUBMIT_ACTION_ID,
     VALIDATE_ACTION_ID,
+    answered_text,
     attribute_modal,
     chunk_lines,
     companies_text,
@@ -2731,6 +2779,7 @@ from premday_bot.immap_views import (
     poll_modal,
     report_text,
     submit_modal,
+    unattribute_modal,
     validate_modal,
 )
 from premday_bot.polls import ACTION_DONE, ACTION_EXTEND, poll_document
@@ -2876,9 +2925,11 @@ def test_card_and_report_follow_the_polls_template(tmp_path) -> None:
     assert [line.split(":")[0] for line in lines] == list(done.metrics)  # template order
 
 
-def test_companies_text_lists_users_fingerprints_and_the_unattributed(tmp_path) -> None:
+def test_companies_text_lists_members_key_holder_and_users_without_a_company(tmp_path) -> None:
     world = make_world(tmp_path)
     world.service.add_company(email=ADMIN_EMAIL, company_id="empty")
+    world.service.enroll(user_id="U_COLLEAGUE", public_key=immap.public_key(7654321))
+    world.service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_COLLEAGUE")
     world.service.enroll(user_id="U_WAITING", public_key=immap.public_key(1234567))
     text = companies_text(
         world.service.companies(email=ADMIN_EMAIL),
@@ -2886,10 +2937,17 @@ def test_companies_text_lists_users_fingerprints_and_the_unattributed(tmp_path) 
     )
     assert "*Companies (4)*" in text
     key = immap.public_key(world.company_keys["acme"])
-    assert f"`acme`: <@U_ACME> (key `{immap.fingerprint(key)}`)" in text
-    assert "`empty`: _nobody attributed_" in text
-    assert "*Enrolled, not attributed:* <@U_WAITING>" in text
+    assert f"`acme`: <@U_ACME> (key holder, key `{immap.fingerprint(key)}`), <@U_COLLEAGUE>" in text
+    assert "`empty`: _no member_" in text
+    assert "*Enrolled, without a company:* <@U_WAITING>" in text
     assert "none yet" in companies_text([], [])
+
+
+def test_answered_text_mentions_the_colleagues_and_names_the_submitter() -> None:
+    text = answered_text("acme", "U_ONE", ["U_TWO", "U_THREE"])
+    assert text.startswith("<@U_TWO> <@U_THREE> <@U_ONE> submitted the values of *acme*")
+    assert "replaces it" in text
+    assert "&lt;" in answered_text("a<b", "U_ONE", ["U_TWO"])
 
 
 def test_attribute_modal_and_help_cover_company_management() -> None:
@@ -2897,6 +2955,7 @@ def test_attribute_modal_and_help_cover_company_management() -> None:
     assert [b["block_id"] for b in modal["blocks"]] == ["company", "user"]
     assert [o["value"] for o in modal["blocks"][0]["element"]["options"]] == ["acme", "bolt"]
     assert modal["blocks"][1]["element"]["type"] == "users_select"
+    assert unattribute_modal()["blocks"][0]["element"]["type"] == "users_select"
     for command in ("register <public_key>", "companies", "company add", "company remove",
                     "company attribute", "company unattribute"):
         assert f"/immap {command}" in HELP_TEXT
@@ -2936,6 +2995,7 @@ SUBMIT_CALLBACK_ID = "immap_submit"
 EXTEND_CALLBACK_ID = "immap_extend"
 DONE_CALLBACK_ID = "immap_done"
 ATTRIBUTE_CALLBACK_ID = "immap_attribute"
+UNATTRIBUTE_CALLBACK_ID = "immap_unattribute"
 START_ACTION_ID = "immap_start"
 SUBMIT_ACTION_ID = "immap_submit_open"
 EXTEND_ACTION_ID = "immap_extend_open"
@@ -2955,15 +3015,15 @@ STATUS_LABELS = {
 
 HELP_TEXT = (
     "*IMMAP polls*\n"
-    "• `/immap register <public_key>` enrolls you; an admin then attributes a company to you\n"
+    "• `/immap register <public_key>` enrolls you; an admin then adds you to your company\n"
     "• `/immap poll` creates a poll\n"
     "• `/immap report [poll_id]` shows validated results\n"
     "*Admins only*\n"
     "• `/immap admin-register <public_key>` registers an admin key\n"
-    "• `/immap companies` lists the companies, their users and who is not attributed yet\n"
+    "• `/immap companies` lists the companies, their members and who has no company yet\n"
     "• `/immap company add <company_id>` and `/immap company remove <company_id>`\n"
-    "• `/immap company attribute` picks the enrolled user who answers for a company\n"
-    "• `/immap company unattribute <company_id>`"
+    "• `/immap company attribute` adds an enrolled user to a company (first = key holder)\n"
+    "• `/immap company unattribute` removes a member from their company"
 )
 
 
@@ -2990,20 +3050,29 @@ def _text_input(block_id: str, label: str, *, multiline: bool = False, max_lengt
 
 
 def companies_text(companies: list[Company], unattributed: list[str]) -> str:
-    rows = [
-        f"• `{company.company_id}`: "
-        + (
-            f"<@{company.owner_user_id}> (key `{immap.fingerprint(company.public_key)}`)"
-            if company.owner_user_id and company.public_key
-            else "_nobody attributed_"
-        )
-        for company in companies
-    ]
+    rows = []
+    for company in companies:
+        if company.members and company.public_key:
+            holder, *others = company.members
+            people = [f"<@{holder}> (key holder, key `{immap.fingerprint(company.public_key)}`)"]
+            people += [f"<@{user}>" for user in others]
+            rows.append(f"• `{company.company_id}`: " + ", ".join(people))
+        else:
+            rows.append(f"• `{company.company_id}`: _no member_")
     lines = [f"*Companies ({len(companies)})*", *(rows or ["_none yet: `/immap company add`_"])]
     if unattributed:
         mentions = " ".join(f"<@{user}>" for user in unattributed)
-        lines.append(f"*Enrolled, not attributed:* {mentions}")
+        lines.append(f"*Enrolled, without a company:* {mentions}")
     return "\n".join(lines)
+
+
+def answered_text(company_id: str, submitter: str, colleagues: list[str]) -> str:
+    """Tells the other members of a company that a colleague submitted for it."""
+    mentions = " ".join(f"<@{user}>" for user in colleagues)
+    return (
+        f"{mentions} <@{submitter}> submitted the values of *{escape(company_id)}*; "
+        "you do not need to. A new submission before the deadline replaces it."
+    )
 
 
 def attribute_modal(company_ids: list[str]) -> dict:
@@ -3029,9 +3098,27 @@ def attribute_modal(company_ids: list[str]) -> dict:
             {
                 "type": "input",
                 "block_id": "user",
-                "label": _plain("Enrolled user who answers for it"),
+                "label": _plain("Enrolled user to add as a member"),
                 "element": {"type": "users_select", "action_id": "value"},
             },
+        ],
+    }
+
+
+def unattribute_modal() -> dict:
+    return {
+        "type": "modal",
+        "callback_id": UNATTRIBUTE_CALLBACK_ID,
+        "title": _plain("Remove a member"),
+        "submit": _plain("Remove"),
+        "close": _plain("Cancel"),
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "user",
+                "label": _plain("Member to remove from their company"),
+                "element": {"type": "users_select", "action_id": "value"},
+            }
         ],
     }
 
@@ -3332,7 +3419,7 @@ git commit -m "Let people drive polls from Slack" -m "Add modals, poll card, pol
 
 **Interfaces:**
 - Consumes: Tasks 2-5 (`PollService` methods, `PollError`, `unfence`, views and id constants), `Settings`.
-- Produces: `Settings.immap_reminder_hours: int = 24` and `Settings.immap_admin_emails: frozenset[str] = frozenset()` (lowercased); in `immap_slack`: `parse_command(text) -> tuple[str, list[str]]`, `poll_error_block(message) -> str`, `extend_error_block(message) -> str`, `email_of(client, user_id) -> str | None`, `refresh_card(client, polls, poll_id)`, `post_in_thread(client, polls, poll_id, text)`, `sweep_once(client, polls, reminder_period: timedelta)`, `run_sweeper(client, polls, reminder_period)`, `register_immap(app, polls, settings)` (registers `/immap`, five views and four button actions: 10 listeners).
+- Produces: `Settings.immap_reminder_hours: int = 24` and `Settings.immap_admin_emails: frozenset[str] = frozenset()` (lowercased); in `immap_slack`: `parse_command(text) -> tuple[str, list[str]]`, `poll_error_block(message) -> str`, `extend_error_block(message) -> str`, `email_of(client, user_id) -> str | None`, `refresh_card(client, polls, poll_id)`, `post_in_thread(client, polls, poll_id, text)`, `sweep_once(client, polls, reminder_period: timedelta)`, `run_sweeper(client, polls, reminder_period)`, `register_immap(app, polls, settings)` (registers `/immap`, six views and four button actions: 11 listeners).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3378,6 +3465,7 @@ Create `tests/test_immap_slack.py`:
 
 ````python
 import asyncio
+import json
 from datetime import timedelta
 from typing import Any, cast
 
@@ -3396,7 +3484,11 @@ from premday_bot.immap_slack import (
     register_immap,
     sweep_once,
 )
-from premday_bot.immap_views import ATTRIBUTE_CALLBACK_ID
+from premday_bot.immap_views import (
+    ATTRIBUTE_CALLBACK_ID,
+    SUBMIT_CALLBACK_ID,
+    UNATTRIBUTE_CALLBACK_ID,
+)
 from premday_bot.polls import ACTION_EXTEND, COLLECTING, INCOMPLETE
 
 
@@ -3527,8 +3619,8 @@ def test_handlers_register_on_a_bolt_app(tmp_path) -> None:
         smtp_password=None, smtp_use_tls=True, smtp_use_ssl=False, email_from=None,
     )
     register_immap(app, world.service, settings)
-    # one command, five views and four buttons
-    assert len(app._async_listeners) == 10
+    # one command, six views and four buttons
+    assert len(app._async_listeners) == 11
 
 
 class CapturingApp:
@@ -3596,7 +3688,7 @@ def command_driver(tmp_path):
 
 
 def test_users_enroll_and_admins_manage_companies_through_the_command(tmp_path) -> None:
-    world, _, _, opened, say = command_driver(tmp_path)
+    _, _, _, opened, say = command_driver(tmp_path)
     key = immap.public_key(immap.generate_private_key())
     assert "Enrolled" in say("U_NEW", f"register {key}", email=None).texts[0]
     assert "Only admins" in say("U_NEW", "companies", email="x@example.com").texts[0]
@@ -3608,8 +3700,9 @@ def test_users_enroll_and_admins_manage_companies_through_the_command(tmp_path) 
     modal = opened[0]["view"]
     assert [o["value"] for o in modal["blocks"][0]["element"]["options"]][-1] == "newco"
     assert "Removed `newco`" in say("U_ADMIN", "company remove newco").texts[0]
-    assert "no user attributed" in say("U_ADMIN", "company unattribute acme").texts[0]
-    assert world.service.owner_of("acme") is None
+    say("U_ADMIN", "company unattribute")
+    assert opened[1]["view"]["callback_id"] == UNATTRIBUTE_CALLBACK_ID
+    assert "Only admins" in say("U_NEW", "company unattribute", email="x@example.com").texts[0]
     assert "Only admins" in say("U_ADMIN", "company attribute", email=None).texts[0]
     assert "IMMAP polls" in say("U_NEW", "register acme abc").texts[0]  # the old 2-arg form
 
@@ -3635,7 +3728,69 @@ def test_the_attribute_modal_attributes_and_reports_errors(tmp_path) -> None:
     assert "Only admins" in refused.acks[0]["errors"]["user"]
     done = submit("newco", "U_NEW").acks[0]
     assert done["response_action"] == "update" and "<@U_NEW>" in str(done["view"])
-    assert world.service.owner_of("newco") == "U_NEW"
+    assert world.service.members_of("newco") == ["U_NEW"]
+
+
+def test_removing_a_member_through_the_modal(tmp_path) -> None:
+    _, app, client, _, _ = command_driver(tmp_path)
+    handler = cast(Any, app.handlers[UNATTRIBUTE_CALLBACK_ID])
+
+    def submit(user: str, email: str | None = ADMIN_EMAIL) -> Reply:
+        client.profile_email = email
+        view = {"state": {"values": {"user": {"value": {"selected_user": user}}}}}
+        reply = Reply()
+        run(handler(reply.ack, {"user": {"id": "U_ADMIN"}}, view, web(client)))
+        return reply
+
+    assert "does not belong" in submit("U_STRANGER").acks[0]["errors"]["user"]
+    assert "Only admins" in submit(owner("bolt"), email="x@example.com").acks[0]["errors"]["user"]
+    done = submit(owner("bolt")).acks[0]
+    assert done["response_action"] == "update" and "bolt" in str(done["view"])
+
+
+def test_colleagues_learn_when_a_member_of_their_company_submits(tmp_path) -> None:
+    world, app, client, _, _ = command_driver(tmp_path)
+    world.service.enroll(user_id="U_ACME_2", public_key=immap.public_key(1111111))
+    world.service.enroll(user_id="U_ACME_3", public_key=immap.public_key(2222222))
+    for user in ("U_ACME_2", "U_ACME_3"):
+        world.service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id=user)
+    poll = with_card(world, world.collecting_poll())
+    handler = cast(Any, app.handlers[SUBMIT_CALLBACK_ID])
+
+    def submit(user: str, company_id: str) -> Reply:
+        view = {
+            "private_metadata": json.dumps({"poll_id": poll.id}),
+            "state": {"values": {"line": {"value": {"value": world.line(poll, company_id)}}}},
+        }
+        reply = Reply()
+        run(handler(reply.ack, {"user": {"id": user}}, view, web(client)))
+        return reply
+
+    # A colleague (not the key holder) submits for acme: the other two members are told.
+    assert submit("U_ACME_2", "acme").acks == [{}]
+    notices = [m for m in client.messages if m.get("thread_ts") == "9.9"]
+    assert len(notices) == 1
+    assert "<@U_ACME> <@U_ACME_3> <@U_ACME_2> submitted the values of *acme*" in notices[0]["text"]
+    assert notices[0]["channel"] == poll.channel_id
+    # A company with a single member has nobody to tell.
+    client.messages.clear()
+    submit(owner("bolt"), "bolt")
+    assert [m for m in client.messages if "submitted the values" in m["text"]] == []
+    # Someone outside the company cannot answer for it.
+    refused = submit(owner("corp"), "acme")
+    assert "not a member of `acme`" in refused.acks[0]["errors"]["line"]
+
+
+def test_reminders_mention_every_member_of_a_missing_company(tmp_path) -> None:
+    world = make_world(tmp_path)
+    world.service.enroll(user_id="U_ACME_2", public_key=immap.public_key(1111111))
+    world.service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id="U_ACME_2")
+    poll = with_card(world, world.collecting_poll())
+    client = FakeClient()
+    world.clock.advance(timedelta(hours=25))
+    run(sweep_once(web(client), world.service, timedelta(hours=24)))
+    reminder = next(m["text"] for m in client.messages if "Reminder" in m["text"])
+    assert "<@U_ACME> <@U_ACME_2>" in reminder and poll.id
 ````
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -3708,7 +3863,9 @@ from premday_bot.immap_views import (
     START_ACTION_ID,
     SUBMIT_ACTION_ID,
     SUBMIT_CALLBACK_ID,
+    UNATTRIBUTE_CALLBACK_ID,
     VALIDATE_ACTION_ID,
+    answered_text,
     attribute_modal,
     chunk_lines,
     companies_text,
@@ -3720,6 +3877,7 @@ from premday_bot.immap_views import (
     poll_modal,
     report_text,
     submit_modal,
+    unattribute_modal,
     validate_modal,
 )
 from premday_bot.polls import (
@@ -3801,8 +3959,8 @@ async def sweep_once(
             "An admin can extend the deadline.",
         )
     for poll, missing in polls.due_reminders(reminder_period):
-        owners = [owner for company in missing if (owner := polls.owner_of(company))]
-        mentions = " ".join(f"<@{owner}>" for owner in owners)
+        users = [user for company in missing for user in polls.members_of(company)]
+        mentions = " ".join(f"<@{user}>" for user in users)
         await post_in_thread(
             client,
             polls,
@@ -3853,20 +4011,19 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
                     view=attribute_modal([c.company_id for c in polls.companies(email=email)]),
                 )
                 return
+            elif subcommand == "company" and args and args[0].lower() == "unattribute":
+                polls.companies(email=await email_of(client, user_id))  # admins only
+                await client.views_open(trigger_id=body["trigger_id"], view=unattribute_modal())
+                return
             elif subcommand == "company" and len(args) == 2:
                 email = await email_of(client, user_id)
                 action, company_id = args[0].lower(), args[1]
                 if action == "add":
                     polls.add_company(email=email, company_id=company_id)
-                    text = (
-                        f"Added `{company_id}`. Attribute a user with `/immap company attribute`."
-                    )
+                    text = f"Added `{company_id}`. Add members with `/immap company attribute`."
                 elif action == "remove":
                     polls.remove_company(email=email, company_id=company_id)
                     text = f"Removed `{company_id}`."
-                elif action == "unattribute":
-                    polls.unattribute_company(email=email, company_id=company_id)
-                    text = f"`{company_id}` has no user attributed any more."
                 else:
                     text = HELP_TEXT
             elif subcommand == "admin-register" and len(args) == 1:
@@ -3913,6 +4070,21 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
         await ack(
             response_action="update",
             view=notice_modal("Attributed", f"<@{user_id}> now answers for `{company_id}`."),
+        )
+
+    @app.view(UNATTRIBUTE_CALLBACK_ID)
+    async def handle_unattribute(ack, body, view, client: AsyncWebClient) -> None:
+        user_id = view["state"]["values"]["user"]["value"]["selected_user"]
+        try:
+            company_id = polls.unattribute_user(
+                email=await email_of(client, body["user"]["id"]), user_id=user_id
+            )
+        except PollError as error:
+            await ack(response_action="errors", errors={"user": str(error)})
+            return
+        await ack(
+            response_action="update",
+            view=notice_modal("Removed", f"<@{user_id}> no longer belongs to `{company_id}`."),
         )
 
     @app.view(POLL_CALLBACK_ID)
@@ -3982,6 +4154,13 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
             return
         await ack()
         await refresh_card(client, polls, poll_id)
+        submitter = body["user"]["id"]
+        company_id = polls.company_of(submitter)
+        colleagues = [u for u in polls.members_of(company_id or "") if u != submitter]
+        if company_id and colleagues:
+            await post_in_thread(
+                client, polls, poll_id, answered_text(company_id, submitter, colleagues)
+            )
         if poll.status == COMPLETE:
             await post_in_thread(
                 client,
@@ -4141,14 +4320,14 @@ def test_build_app_registers_meeting_and_immap_handlers(tmp_path) -> None:
         email_from=None,
     )
     app = build_app(settings)
-    # /meeting + schedule view + two meeting buttons, then /immap + 5 views + 4 buttons
-    assert len(app._async_listeners) == 4 + 10
+    # /meeting + schedule view + two meeting buttons, then /immap + 6 views + 4 buttons
+    assert len(app._async_listeners) == 4 + 11
 ````
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/test_app_wiring.py`
-Expected: FAIL, `assert 4 == 14` (only the 4 meeting listeners exist).
+Expected: FAIL, `assert 4 == 15` (only the 4 meeting listeners exist).
 
 - [ ] **Step 3: Write the implementation**
 
@@ -4283,7 +4462,7 @@ python immap.py keygen                      # companies: writes immap.key, print
 python immap.py keygen --key admin.key      # admins: writes admin.key
 ```
 
-**Companies:** enroll once with `/immap register <public_key>`; an admin then attributes your company to you. When a poll is started, save the
+**Companies:** enroll once with `/immap register <public_key>`; an admin then adds you to your company (several people can belong to one company; the first member holds the company key, so share the key file with colleagues). When a colleague submits for your company, the other members are mentioned in the poll thread. When a poll is started, save the
 `poll.json` the bot posts in the thread, write `values.json` (every metric, integers, `0` for none),
 then run `python immap.py submit poll.json values.json` and paste the printed line into **Submit**.
 Compare the key fingerprints printed by the tool with the ones you registered.
@@ -4295,11 +4474,12 @@ Compare the key fingerprints printed by the tool with the ones you registered.
   as `lines.txt`). Paste the output back into the modal.
 - Totals become visible with `/immap report <poll_id>` only after a poll is validated (`done`).
 
-**Admins also manage the companies:** `/immap companies` lists them with their user and key fingerprint
-and who has enrolled without a company; `/immap company add <id>`, `remove <id>`, `unattribute <id>` and
-`/immap company attribute` (a modal: company + enrolled user) maintain the list. A company's key is the
-key of the user attributed to it. Companies that are in a poll that is not `done` are frozen, because their
-key is snapshotted in it.
+**Admins also manage the companies:** `/immap companies` lists them with their members and key fingerprint
+and who has enrolled without a company; `/immap company add <id>`, and `remove <id>`
+maintain the list, `/immap company attribute` (a modal: company + enrolled user) adds a member and
+`/immap company unattribute` (a modal: user) removes one. A company's key is the key of its first member.
+Removing a company or its key holder is refused while the company is in a poll that is not `done`, because
+the key is snapshotted there; adding or removing other members is always possible.
 
 **Poll templates:** a poll is created from a template, a fixed list of metrics with units (defined in
 `immap.py`, `POLL_TEMPLATES`). The first one, `infra-footprint`, covers rooms, racks and rack units, power,
