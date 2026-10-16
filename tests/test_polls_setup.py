@@ -326,3 +326,12 @@ def test_create_poll_rejects_an_unknown_template(tmp_path) -> None:
             participants=list(COMPANIES),
             template="nope",
         )
+
+
+def test_poll_json_does_not_publish_admin_emails(tmp_path) -> None:
+    world = make_world(tmp_path)
+    poll = world.new_poll()
+    document = poll_document(poll)
+    assert ADMIN_EMAIL not in str(document) and SECOND_ADMIN_EMAIL not in str(document)
+    ids = [admin["admin_id"] for admin in document["admins"]]
+    assert len(set(ids)) == 2 and all(len(i) == 8 for i in ids)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -96,7 +97,7 @@ def poll_document(poll: Poll) -> dict:
         "participants": [
             {"company_id": company_id, "public_key": key} for company_id, key in poll.participants
         ],
-        "admins": [{"admin_id": email, "public_key": key} for email, key in poll.admins],
+        "admins": [{"admin_id": _admin_id(email), "public_key": key} for email, key in poll.admins],
         "bot_public_key": poll.bot_public_key,
         "deadline": poll.deadline.isoformat(),
     }
@@ -804,6 +805,11 @@ class PollService:
         if not ok:
             raise PollError("The admin key proof is invalid.")
 
+
+
+def _admin_id(email: str) -> str:
+    """A stable opaque label for an admin: poll.json is posted in a channel, emails are private."""
+    return hashlib.sha256(email.encode()).hexdigest()[:8]
 
 
 def _normalized_key(public_key: str) -> str:
