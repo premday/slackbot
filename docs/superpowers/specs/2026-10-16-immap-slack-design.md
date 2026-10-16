@@ -75,9 +75,31 @@ database could forge a tag, but still cannot read the submissions.
 - Group: RFC 3526 group 14 (2048-bit MODP, `g = 2`) via Python's `pow()`; private exponents 256 random
   bits; peer public keys must be hexadecimal digits only and satisfy `2 <= y <= p-2`.
 - Values: non-negative integers in the metric's unit, `0 <= v < 2^48` (round up).
-- Metrics (schema version 1) are the 12 from the PR, units unchanged, defined once in `immap.py` and
-  copied into `poll.json`. They can change with the PR review (VRAM, NVMe, ...) by bumping
-  `schema_version`.
+- Metrics come from the poll's template (next section); `immap.py` defines the templates once.
+
+## Poll templates
+
+A poll is created from a **template**: an id, title, description, integer `version` and an ordered list of
+metrics with units, defined once in `immap.py` (`POLL_TEMPLATES`, `DEFAULT_TEMPLATE`). The poll stores the
+template id, version and a **snapshot of its metrics**, so editing a template later never changes polls that
+exist, and `poll.json` carries `template`, `schema_version` (= template version) and `metrics`. The create
+modal has a template picker (which lists every template with its metric count). Adding a template means
+adding an entry to `POLL_TEMPLATES`; the protocol itself takes whatever metrics the poll lists.
+
+**Template `infra-footprint` v1** (23 metrics) is the PR's list amended with the PR review:
+
+| Group | Metrics (unit) | Origin |
+|---|---|---|
+| Site | `datacenter_room_count` (rooms), `rack_count` (racks), `rack_unit_count` (RU), `global_power_consumption` (kW), `cdu_count` (units) | PR; racks asked by Arno500, RU added because rack height varies (superMario-HW) |
+| Hosts | `host_count`, `openbmc_host_count`, `ocp_21in_host_count` (hosts) | PR; 21"/OCP by rgoncalvesse |
+| Compute | `cpu_core_count` (cores), `dimm_memory` (TiB), `gpu_card_count` (cards), `gpu_vram` (TiB), `accelerator_card_count` (cards, e.g. QAT) | PR; VRAM by Arno500, accelerators by superMario-HW |
+| Storage | `hdd_sata_capacity`, `ssd_sata_capacity`, `ssd_nvme_capacity` (TiB) | replaces HDD total and the three SSD endurance classes (superMario-HW, rgoncalvesse) |
+| Network | `nic_count` (cards), `optics_count` (modules), `fiber_cable_count`, `copper_cable_count` (cables) | superMario-HW |
+| Power supplies | `psu_silver_count`, `psu_gold_count`, `psu_platinum_count` (units) | superMario-HW |
+
+Choices to confirm with the group: SAS disks count with SATA of the same medium; PSU levels beyond
+silver/gold/platinum are not asked; the SSD endurance classes are dropped, as proposed in review. A sealed
+line for this template with 5 admins is about 1.9 kB, under Slack's 3000-character field limit (tested).
 
 ## Tool: `immap.py`
 
@@ -113,7 +135,7 @@ incomplete ──admin extends deadline──▶ collecting
 
 | Status | Meaning | Submissions | Totals visible |
 |---|---|---|---|
-| `created` | Poll defined: title, schema, participants (fixed, keys snapshotted) and a mandatory future deadline. Card and `poll.json` are posted so companies can check key fingerprints and prepare. | rejected | no |
+| `created` | Poll defined: title, template, participants (fixed, keys snapshotted) and a mandatory future deadline. Card and `poll.json` are posted so companies can check key fingerprints and prepare. | rejected | no |
 | `collecting` | Started by the creator or an admin. Reminders run. | accepted; resubmitting replaces the previous line | no |
 | `complete` | All N companies submitted (N sealed lines the bot cannot read). Card says "awaiting validation". | rejected | no |
 | `done` | An admin supplied the aggregate output and a valid proof. Terminal. | rejected | yes |
@@ -147,11 +169,11 @@ One new slash command, `/immap`, no new OAuth scopes.
 |---|---|
 | `/immap register <company_id> <public_key>` | Binds the key to the caller's company. `company_id` is `[a-z0-9-]{2,32}`, owned by the first Slack user who registers it; a key can belong to one company only. |
 | `/immap admin-register <public_key>` | Admins only: registers or replaces their admin key (max 5 admins with keys). |
-| `/immap poll` | Modal: title (≤150 chars), deadline date (default +7 days), companies (multi-select). Needs ≥3 companies and ≥1 admin key; the card warns below 10 companies (IMMAP's recommendation). Creates a poll in `created`. |
+| `/immap poll` | Modal: title (≤150 chars), template, deadline date (default +7 days), companies (multi-select). Needs ≥3 companies and ≥1 admin key; the card warns below 10 companies (IMMAP's recommendation). Creates a poll in `created`. |
 | `/immap report [poll_id]` | Ephemeral. No argument: validated polls of this channel. With an id: title, companies, extension badge and totals. Anything not `done` is refused. |
 
 The poll card has the buttons that fit its status: **Start collecting**, **Submit**, **Extend deadline**,
-**Validate**. A thread reply carries `poll.json` (poll id, schema, metrics, participants and admins with
+**Validate**. A thread reply carries `poll.json` (poll id, template, metrics, participants and admins with
 public keys, one-time bot key, deadline) and every key's fingerprint. Extend and Validate open modals that
 show the nonce and the exact command to run. Pasted text may carry Slack code markup (backticks or fences),
 which is stripped.
@@ -171,7 +193,7 @@ A periodic task started in `run()` (every 60 s) moves `collecting` polls past th
 | `slack/app-manifest.yaml`, `README.md`, `.env.example` | Command registration and docs. |
 
 Tables: `companies(company_id PK, owner_user_id, public_key)`; `admin_keys(admin_email PK, public_key)`;
-`immap_polls(id PK, channel_id, creator_user_id, title, schema_version, status, deadline,
+`immap_polls(id PK, channel_id, creator_user_id, title, template, schema_version, metrics, status, deadline,
 original_deadline, extension_count, participants JSON, admins JSON, bot_public_key, bot_private_key,
 message_ts, started_at, last_reminded_at, totals JSON, validated_by, validated_at)`;
 `immap_submissions(poll_id, company_id, line, submitted_at, PK(poll_id, company_id))`;
@@ -221,5 +243,5 @@ the sweeper (with a fake client) and a registration test on a real Bolt app.
 Replace the sequential relay (steps 2–8, Company 1, audit chain) with the pairwise-masking round and the
 admin sealing above, and record the relay leak in the threat model. The metric table feedback from
 review (VRAM, NVMe/SATA split, SSD total vs. intensity classes, racks, NICs, optics, 21"/OCP) stays an
-open decision for the group; the bot takes whatever list is agreed through `schema_version`. Kept as a
+open decision for the group; the bot takes whatever list is agreed as a new template version (the first template, `infra-footprint`, already includes these requests). Kept as a
 local draft until you ask for it to be published.

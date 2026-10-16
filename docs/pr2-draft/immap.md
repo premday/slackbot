@@ -43,24 +43,40 @@ protocol does not depend on Slack.
 
 # Metrics Collected
 
-| Metric | Unit |
-|---|---|
-| CPU core count | cores |
-| DIMM memory | TiB |
-| GPU card count | cards |
-| HDD total capacity | TiB |
-| SSD Read Intensive capacity | TiB |
-| SSD Mixed Use capacity | TiB |
-| SSD Write Intensive capacity | TiB |
-| CDU count | units |
-| OpenBMC host count | hosts |
-| Host count | hosts |
-| Global power consumption | kW |
-| Datacenter room count | rooms |
+Polls are created from a **template**: a fixed list of metrics and units, versioned. A poll keeps the
+metrics of the template version it was created with, so a template can evolve without touching running
+polls. The first template, `infra-footprint` (v1), is the original list amended with the review comments
+on this page:
 
-The list is **an open decision for the group**. Review comments to settle: GPU VRAM, racks (rack units are a
-misleading footprint), NVMe/SATA split, SSD intensity classes vs. a total, NICs, accelerators, PSUs,
-optics, cabling, 21" / OCP servers. A change bumps `schema_version`; nothing else in the protocol moves.
+| Metric | Unit | Note |
+|---|---|---|
+| Datacenter room count | rooms | |
+| Rack count | racks | racks are a better footprint indicator than hosts alone |
+| Rack unit count | RU | racks vary in height, so RU are asked as well |
+| Global power consumption | kW | |
+| CDU count | units | |
+| Host count | hosts | |
+| OpenBMC host count | hosts | |
+| 21" / OCP host count | hosts | |
+| CPU core count | cores | |
+| DIMM memory | TiB | |
+| GPU card count | cards | |
+| GPU VRAM | TiB | |
+| Accelerator card count | cards | e.g. QAT |
+| HDD (SATA) capacity | TiB | replaces the HDD total |
+| SSD (SATA) capacity | TiB | replaces the three endurance classes |
+| SSD (NVMe) capacity | TiB | NVMe has its own line |
+| NIC count | cards | |
+| Optics count | modules | |
+| Fiber cable count | cables | |
+| Copper cable count | cables | |
+| PSU Silver count | units | |
+| PSU Gold count | units | |
+| PSU Platinum count | units | |
+
+Still open for the group: whether SAS disks count with SATA of the same medium, whether other PSU levels
+are wanted, and whether to keep the endurance classes. Any change is a new template version (or a new
+template); nothing else in the protocol moves.
 
 All metrics and units MUST be fixed before a poll starts. Values are non-negative integers (round up),
 below 2^48. **Every company answers every metric**; `0` means "none", never "n/a". This guarantees that
@@ -132,14 +148,15 @@ Keys are reused across polls; masks differ per `poll_id`.
 
 ## Step 2 — Poll creation
 
-The organizer defines the poll: title, participants and a **mandatory deadline** (end of day, organizer
+The organizer defines the poll: title, template, participants and a **mandatory deadline** (end of day, organizer
 timezone). Participant and admin public keys are **snapshotted** and published as `poll.json`:
 
 ```json
 {
   "poll_id": "premday-2026-infra",
+  "template": "infra-footprint",
   "schema_version": 1,
-  "units": {"cpu_core_count": "cores", "dimm_memory": "TiB", "...": "..."},
+  "metrics": {"cpu_core_count": "cores", "dimm_memory": "TiB", "...": "..."},
   "participants": [{"id": 3, "public_key": "..."}, "..."],
   "admins": [{"public_key": "..."}],
   "bot_public_key": "...",
@@ -157,7 +174,7 @@ Once started, every company runs, locally:
 python immap.py submit poll.json values.json
 ```
 
-`values.json` holds the twelve integers. The tool computes `y_i`, **seals it to every admin public key**
+`values.json` holds one integer per metric of the template. The tool computes `y_i`, **seals it to every admin public key**
 and prints one line, which the company pastes into the poll. Sealing means: a random key encrypts the
 vector (SHAKE256 stream) and authenticates it (HMAC-SHA256); that key is wrapped for each admin through a
 Diffie-Hellman exchange with a one-time ephemeral key.
