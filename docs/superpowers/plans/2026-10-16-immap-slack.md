@@ -83,8 +83,9 @@ from typing import Any
 
 import pytest
 
-from helpers import TEMPLATE_METRICS
 from premday_bot import immap
+
+TEMPLATE_METRICS = immap.POLL_TEMPLATES[immap.DEFAULT_TEMPLATE].metrics
 
 
 def make_poll(count: int, admin_count: int = 2):
