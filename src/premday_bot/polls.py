@@ -515,11 +515,21 @@ class PollService:
         return company
 
     def _require_no_open_poll(self, company_id: str) -> None:
-        """A company's key is snapshotted in its polls, so it cannot change until they are done."""
+        """A company's key is snapshotted in its polls: frozen while they can take submissions.
+
+        Once a poll is complete the admin keys open the lines, and past its deadline a created or
+        collecting poll can only continue after an extension, so neither blocks a key change.
+        """
+        now = self._clock()
         for poll in self._store.list_polls():
-            if poll.status != DONE and company_id in poll.participant_ids:
+            if (
+                poll.status in (CREATED, COLLECTING)
+                and poll.deadline > now
+                and company_id in poll.participant_ids
+            ):
                 raise PollError(
-                    f"`{company_id}` is part of the open poll `{poll.id}`; wait until it is done."
+                    f"`{company_id}` is part of the open poll `{poll.id}`; "
+                    "wait until it is complete or past its deadline."
                 )
 
     def register_admin_key(self, *, email: str | None, public_key: str) -> str:

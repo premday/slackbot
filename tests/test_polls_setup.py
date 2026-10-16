@@ -335,3 +335,20 @@ def test_poll_json_does_not_publish_admin_emails(tmp_path) -> None:
     assert ADMIN_EMAIL not in str(document) and SECOND_ADMIN_EMAIL not in str(document)
     ids = [admin["admin_id"] for admin in document["admins"]]
     assert len(set(ids)) == 2 and all(len(i) == 8 for i in ids)
+
+
+def test_the_key_freeze_only_lasts_while_a_poll_can_still_receive_submissions(tmp_path) -> None:
+    world = make_world(tmp_path)
+    service = world.service
+    # Complete: every line is in, the admin key opens them, so the company key no longer matters.
+    complete = world.complete_poll()
+    assert service.unattribute_user(email=ADMIN_EMAIL, user_id=owner("acme")) == "acme"
+    service.attribute_company(email=ADMIN_EMAIL, company_id="acme", user_id=owner("acme"))
+    assert service.get(complete.id).status == "complete"
+    # Created but past its deadline: it can only be started after an extension, so it must not
+    # lock the company forever.
+    stale = world.new_poll(days=1)
+    world.clock.advance(timedelta(days=3))
+    service.unattribute_user(email=ADMIN_EMAIL, user_id=owner("bolt"))
+    service.remove_company(email=ADMIN_EMAIL, company_id="corp")
+    assert stale.id
