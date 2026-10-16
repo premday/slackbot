@@ -148,7 +148,7 @@ no order and no relay.
 - Each user runs `python immap.py keygen` and enrolls its **public** key (`/immap register <public_key>`).
 - Each admin does the same with `/immap admin-register`, and maintains the list of companies:
   add or remove a company, then attribute it to an enrolled user. A company in a poll that is not finished
-  cannot change, because its key is part of the poll.
+  cannot change its key, because it is part of the poll.
 
 Keys are reused across polls; masks differ per `poll_id`.
 

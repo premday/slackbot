@@ -159,8 +159,9 @@ Compare the key fingerprints printed by the tool with the ones you registered.
 and who has enrolled without a company; `/immap company add <id>`, and `remove <id>`
 maintain the list, `/immap company attribute` (a modal: company + enrolled user) adds a member and
 `/immap company unattribute` (a modal: user) removes one. A company's key is the key of its first member.
-Removing a company or its key holder is refused while the company is in a poll that is not `done`, because
-the key is snapshotted there; adding or removing other members is always possible.
+Removing a company, its key holder, or rotating the holder's key is refused while the company is in a
+`created` or `collecting` poll that has not reached its deadline, because the key is snapshotted there;
+adding or removing other members is always possible.
 
 **Poll templates:** a poll is created from a template, a fixed list of metrics with units (defined in
 `immap.py`, `POLL_TEMPLATES`). The first one, `infra-footprint`, covers rooms, racks and rack units, power,

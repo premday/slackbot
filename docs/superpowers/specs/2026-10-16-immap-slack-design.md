@@ -159,6 +159,9 @@ Rules:
 - **Admin** = Slack profile email in `IMMAP_ADMIN_EMAILS` (comma-separated, case-insensitive; empty means
   nobody). Any one admin suffices. Admin checks run on the server for every click. Test fixtures:
   Aurélien Rougemont (Criteo), `a.rougemont@criteo.com`, plus a second admin and a non-admin.
+- **Sanity bound:** a total can never exceed N × 2^48. `aggregate` and the bot's `mark_done` refuse larger
+  totals, which only a corrupted or tampered submission can produce. `poll.json` identifies admins by an
+  opaque 8-hex id, never by email, because it is posted in a channel.
 - **Validation:** an admin clicks **Validate**; the bot issues a nonce and releases the N sealed lines
   (privately, as chat messages), the admin runs `immap.py aggregate` offline and pastes its output into
   the modal. The bot checks the totals match the schema and the proof covers them, then stores them. The
@@ -226,8 +229,9 @@ RSVP code is untouched.
   `collecting` is allowed.
 - Company management is by admin Slack identity only (no key proof): it decides who may answer for a
   company, and the key fingerprints on the poll card and in `poll.json` let companies detect a wrong
-  attribution. A company that is in a poll that is not `done` cannot be removed, and its key holder cannot leave
-  (its key is snapshotted there). Adding a member or removing another one is always allowed, so a company
+  attribution. A company that is in a `created` or `collecting` poll before its deadline cannot be removed, and its key
+  holder can neither leave nor rotate their key (the key is snapshotted there; a complete or overdue poll no
+  longer needs it). Adding a member or removing another one is always allowed, so a company
   can add a colleague who must answer while a poll is open.
 - An admin whose key was registered after a poll's creation cannot open or act on that poll.
 - No dropout recovery: an `incomplete` poll is extended or replaced by a new poll without the missing
