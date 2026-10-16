@@ -163,9 +163,11 @@ def register_immap(app: AsyncApp, polls: PollService, settings: Settings) -> Non
                 )
             elif subcommand == "company" and args and args[0].lower() == "attribute":
                 email = await email_of(client, user_id)
+                company_ids = [c.company_id for c in polls.companies(email=email)]
+                if not company_ids:
+                    raise PollError("Add a company first with `/immap company add <id>`.")
                 await client.views_open(
-                    trigger_id=body["trigger_id"],
-                    view=attribute_modal([c.company_id for c in polls.companies(email=email)]),
+                    trigger_id=body["trigger_id"], view=attribute_modal(company_ids)
                 )
                 return
             elif subcommand == "company" and args and args[0].lower() == "unattribute":

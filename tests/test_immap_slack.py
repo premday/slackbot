@@ -6,7 +6,7 @@ from typing import Any, cast
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 
-from helpers import ADMIN_EMAIL, make_world, owner
+from helpers import ADMIN_EMAIL, COMPANIES, make_world, owner
 from premday_bot import immap
 from premday_bot.config import Settings
 from premday_bot.immap_slack import (
@@ -325,3 +325,11 @@ def test_reminders_mention_every_member_of_a_missing_company(tmp_path) -> None:
     run(sweep_once(web(client), world.service, timedelta(hours=24)))
     reminder = next(m["text"] for m in client.messages if "Reminder" in m["text"])
     assert "<@U_ACME> <@U_ACME_2>" in reminder and poll.id
+
+
+def test_attribute_modal_needs_a_company_first(tmp_path) -> None:
+    world, _, _, opened, say = command_driver(tmp_path)
+    for company_id in COMPANIES:
+        world.service.remove_company(email=ADMIN_EMAIL, company_id=company_id)
+    reply = say("U_ADMIN", "company attribute")
+    assert "company add" in reply.texts[0] and opened == []
